@@ -1,0 +1,30 @@
+[
+  {
+    "content": "Phase 1: POC - Test Claude AI integration via emergentintegrations",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 2: Get design guidelines for Apple-futurista trading journal",
+    "status": "in_progress"
+  },
+  {
+    "content": "Phase 2: Backend - Auth, Trades, Strategies, Tags, Brokers, AI, Analytics endpoints",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 2: Frontend - Auth, Dashboard, Trades, Strategies, Brokers, AI Insights pages",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 2: All user stories covered (manual trade, dashboard, CSV import, brokers, AI, calendar, equity)",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 2: End to End Testing using testing_agent_v3",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 2: Fix all reported bugs and re-test",
+    "status": "pending"
+  }
+]
