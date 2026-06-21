@@ -11,6 +11,7 @@ import TradeDetailPage from '@/pages/TradeDetail';
 import NewTradePage from '@/pages/NewTrade';
 import StrategiesPage from '@/pages/Strategies';
 import BrokersPage from '@/pages/Brokers';
+import ContractsPage from '@/pages/Contracts';
 import ImportPage from '@/pages/Import';
 import InsightsPage from '@/pages/Insights';
 import SettingsPage from '@/pages/Settings';
@@ -51,6 +52,7 @@ function App() {
                 <Route path="/trades/new" element={<NewTradePage />} />
                 <Route path="/trades/:id" element={<TradeDetailPage />} />
                 <Route path="/strategies" element={<StrategiesPage />} />
+                <Route path="/contracts" element={<ContractsPage />} />
                 <Route path="/brokers" element={<BrokersPage />} />
                 <Route path="/import" element={<ImportPage />} />
                 <Route path="/insights" element={<InsightsPage />} />

@@ -1,30 +1,26 @@
 [
   {
-    "content": "Phase 1: POC - Test Claude AI integration via emergentintegrations",
+    "content": "Phase 3: Pivot to FUTURES focus - models (point_value, tick_size, session, contract specs)",
     "status": "completed"
   },
   {
-    "content": "Phase 2: Get design guidelines for Apple-futurista trading journal",
+    "content": "Phase 3: P&L calc with point_value for futures, default market=futures",
     "status": "completed"
   },
   {
-    "content": "Phase 2: Backend - Auth, Trades, Strategies, Tags, Brokers, AI, Analytics endpoints",
+    "content": "Phase 3: UI - Contract presets (ES, NQ, CL, GC, MES, MNQ...), Session selector, futures-first labels",
     "status": "completed"
   },
   {
-    "content": "Phase 2: Frontend - Auth, Dashboard, Trades, Strategies, Brokers, AI Insights pages",
+    "content": "Phase 3: Dashboard - Best Contract, By Session breakdown, futures-specific KPIs",
     "status": "completed"
   },
   {
-    "content": "Phase 2: All user stories covered (manual trade, dashboard, CSV import, brokers, AI, calendar, equity)",
+    "content": "Phase 3: AI Insights - Futures-specialized coaching prompts (incl. Sessions preset)",
     "status": "completed"
   },
   {
-    "content": "Phase 2: End to End Testing using testing_agent_v3",
-    "status": "in_progress"
-  },
-  {
-    "content": "Phase 2: Fix all reported bugs and re-test",
-    "status": "pending"
+    "content": "Phase 3: Sample CSV (futures), End-to-end verified working",
+    "status": "completed"
   }
 ]

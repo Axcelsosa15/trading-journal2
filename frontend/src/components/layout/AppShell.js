@@ -4,7 +4,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { Button } from '@/components/ui/button';
 import {
   LayoutDashboard, List, PlusCircle, Tag as TagIcon, Plug, FileUp,
-  Sparkles, Settings, LogOut, Sun, Moon, ActivitySquare,
+  Sparkles, Settings, LogOut, Sun, Moon, ActivitySquare, BookOpen,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -13,6 +13,7 @@ const nav = [
   { to: '/trades', label: 'Trades', icon: List, testid: 'nav-trades' },
   { to: '/trades/new', label: 'New Trade', icon: PlusCircle, testid: 'nav-new-trade' },
   { to: '/strategies', label: 'Strategies', icon: TagIcon, testid: 'nav-strategies' },
+  { to: '/contracts', label: 'Contracts', icon: BookOpen, testid: 'nav-contracts' },
   { to: '/brokers', label: 'Brokers', icon: Plug, testid: 'nav-brokers' },
   { to: '/import', label: 'Import CSV', icon: FileUp, testid: 'nav-import' },
   { to: '/insights', label: 'AI Insights', icon: Sparkles, testid: 'nav-insights' },
@@ -40,7 +41,7 @@ export default function AppShell() {
             <ActivitySquare className="w-5 h-5 text-white" />
           </div>
           <div>
-            <p className="font-display text-base font-semibold leading-none">Edge<span className="text-primary">Journal</span></p>
+            <p className="font-display text-base font-semibold leading-none">Edge<span className="text-primary">Futures</span></p>
             <p className="text-[10px] text-muted-foreground tracking-wider uppercase mt-0.5">Trading Journal</p>
           </div>
         </div>
@@ -94,7 +95,7 @@ export default function AppShell() {
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center">
             <ActivitySquare className="w-4 h-4 text-white" />
           </div>
-          <span className="font-display font-semibold">EdgeJournal</span>
+          <span className="font-display font-semibold">EdgeFutures</span>
         </div>
         <div className="flex gap-1">
           <Button variant="ghost" size="icon" onClick={toggle} data-testid="mobile-theme-toggle">

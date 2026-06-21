@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { Plug, Trash2, RefreshCw, CheckCircle2, AlertCircle, KeyRound } from 'lucide-react';
 import { fmtDateTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { Link } from 'react-router-dom';
 
 const BROKERS = [
   {
@@ -67,11 +68,15 @@ export default function BrokersPage() {
     setSyncing(conn.id);
     try {
       const r = await api.post(`/brokers/connections/${conn.id}/sync`);
-      toast.success(`Imported ${r.data.imported} new trades from ${conn.broker}`);
+      if (r.data.status === 'error') {
+        toast.error(r.data.error || 'Sync failed');
+      } else {
+        toast.success(`Imported ${r.data.imported} new trades from ${conn.broker}`);
+      }
       load();
     } catch (err) {
       const detail = err?.response?.data?.detail;
-      const msg = typeof detail === 'object' ? detail.error : (detail || 'Sync failed');
+      const msg = typeof detail === 'object' ? (detail.error || JSON.stringify(detail)) : (detail || 'Sync failed');
       toast.error(msg);
       load();
     } finally { setSyncing(null); }
@@ -90,6 +95,16 @@ export default function BrokersPage() {
         <h1 className="text-3xl sm:text-4xl font-display font-semibold tracking-tight">Brokers</h1>
         <p className="text-sm text-muted-foreground mt-1">Connect your brokers to automatically import trades. Keys are encrypted at rest.</p>
       </div>
+
+      <div className="glass-card p-4 border-amber-500/30 bg-amber-500/5" data-testid="futures-broker-note">
+        <p className="text-sm font-semibold flex items-center gap-2"><AlertCircle className="w-4 h-4 text-amber-500" /> Futures traders</p>
+        <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+          Most futures platforms (Tradovate, NinjaTrader, TopStep, Rithmic, AMP, Interactive Brokers) don&apos;t offer simple read-only retail APIs.
+          Use <Link to="/import" className="text-primary hover:underline font-medium">Import CSV</Link> to load your fills — every platform supports CSV export.
+          The connectors below are for adjacent markets (crypto, US equities, FX) — useful if you also trade BTC futures, micro-equities, or hedge with spot FX.
+        </p>
+      </div>
+
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {BROKERS.map(b => {

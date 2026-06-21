@@ -67,6 +67,9 @@ export default function TradeDetailPage() {
         exit_price: form.exit_price ? parseFloat(form.exit_price) : null,
         stop_loss: form.stop_loss ? parseFloat(form.stop_loss) : null,
         take_profit: form.take_profit ? parseFloat(form.take_profit) : null,
+        point_value: form.point_value ? parseFloat(form.point_value) : null,
+        tick_size: form.tick_size ? parseFloat(form.tick_size) : null,
+        session: form.session || null,
         fees: parseFloat(form.fees) || 0,
         commission: parseFloat(form.commission) || 0,
         rating: form.rating ? parseInt(form.rating) : null,
@@ -141,6 +144,22 @@ export default function TradeDetailPage() {
               </Select>
             </Field>
             <Field label="Quantity"><Input type="number" step="any" value={form.quantity ?? ''} onChange={e => upd('quantity', e.target.value)} /></Field>
+            <Field label="Session">
+              <Select value={form.session || 'none'} onValueChange={v => upd('session', v === 'none' ? '' : v)}>
+                <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="asia">Asia</SelectItem>
+                  <SelectItem value="london">London</SelectItem>
+                  <SelectItem value="ny_am">NY AM</SelectItem>
+                  <SelectItem value="ny_pm">NY PM</SelectItem>
+                  <SelectItem value="rth">RTH</SelectItem>
+                  <SelectItem value="globex">Globex</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Point Value"><Input type="number" step="any" value={form.point_value ?? ''} onChange={e => upd('point_value', e.target.value)} placeholder="ES=50, NQ=20" /></Field>
+            <Field label="Tick Size"><Input type="number" step="any" value={form.tick_size ?? ''} onChange={e => upd('tick_size', e.target.value)} /></Field>
             <Field label="Strategy">
               <Select value={form.strategy_id || 'none'} onValueChange={v => upd('strategy_id', v === 'none' ? '' : v)}>
                 <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>

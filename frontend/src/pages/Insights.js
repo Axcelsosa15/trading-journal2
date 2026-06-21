@@ -14,7 +14,8 @@ const PRESETS = [
   { id: 'mistakes', label: 'Find Mistakes', icon: AlertTriangle, color: 'text-rose-500' },
   { id: 'best_setups', label: 'Best Setups', icon: TrendingUp, color: 'text-emerald-500' },
   { id: 'risk', label: 'Risk Review', icon: Target, color: 'text-amber-500' },
-  { id: 'weekly', label: 'Weekly Recap', icon: CalIcon, color: 'text-accent' },
+  { id: 'sessions', label: 'Session Analysis', icon: Zap, color: 'text-accent' },
+  { id: 'weekly', label: 'Weekly Recap', icon: CalIcon, color: 'text-primary' },
 ];
 
 export default function InsightsPage() {
@@ -62,7 +63,7 @@ export default function InsightsPage() {
           <h1 className="text-3xl sm:text-4xl font-display font-semibold tracking-tight flex items-center gap-2">
             AI Insights <Sparkles className="w-6 h-6 text-accent" />
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Powered by Claude. Actionable coaching from your trade data.</p>
+          <p className="text-sm text-muted-foreground mt-1">Powered by Claude. Coaching tailored for futures traders.</p>
         </div>
       </div>
 

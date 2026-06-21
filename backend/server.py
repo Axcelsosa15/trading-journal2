@@ -28,6 +28,7 @@ from analytics import compute_metrics, compute_equity_curve, compute_calendar, c
 from brokers import binance_sync, alpaca_sync, oanda_sync, BrokerError  # noqa: E402
 from ai_service import generate_insights  # noqa: E402
 from csv_import import parse_csv  # noqa: E402
+from futures_contracts import FUTURES_CONTRACTS, CONTRACTS_BY_SYMBOL, SESSIONS  # noqa: E402
 import uuid
 
 mongo_url = os.environ["MONGO_URL"]
@@ -44,7 +45,22 @@ logger = logging.getLogger(__name__)
 # ===================== HEALTH =====================
 @api.get("/")
 async def root():
-    return {"message": "Trading Journal API", "status": "ok"}
+    return {"message": "Trading Journal API (Futures)", "status": "ok"}
+
+
+# ===================== FUTURES REFERENCE =====================
+@api.get("/futures/contracts")
+async def get_futures_contracts():
+    """Public reference list of common futures contracts with point/tick values."""
+    return {"contracts": FUTURES_CONTRACTS, "sessions": SESSIONS}
+
+
+@api.get("/futures/contracts/{symbol}")
+async def get_futures_contract(symbol: str):
+    c = CONTRACTS_BY_SYMBOL.get(symbol.upper())
+    if not c:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    return c
 
 
 # ===================== AUTH =====================
@@ -279,7 +295,7 @@ async def analytics_breakdown(
     by: str = Query("strategy_id"),
     current=Depends(get_current_user),
 ):
-    if by not in {"strategy_id", "symbol", "market_type", "emotion", "day_of_week", "side", "broker"}:
+    if by not in {"strategy_id", "symbol", "market_type", "emotion", "day_of_week", "side", "broker", "session", "hour"}:
         raise HTTPException(status_code=400, detail="Invalid 'by' value")
     trades = await _get_user_trades(current["id"])
     return compute_breakdown(trades, by)
@@ -366,8 +382,9 @@ async def sync_broker(conn_id: str, current=Depends(get_current_user)):
     )
 
     if err:
-        raise HTTPException(status_code=400, detail={"error": err, "imported": inserted})
-    return {"imported": inserted, "fetched": len(new_trades), "last_sync": now}
+        # Return 200 with structured payload reflecting graceful failure
+        return {"imported": inserted, "fetched": len(new_trades), "last_sync": now, "status": "error", "error": err}
+    return {"imported": inserted, "fetched": len(new_trades), "last_sync": now, "status": "success"}
 
 
 # ===================== CSV IMPORT =====================
@@ -414,6 +431,8 @@ async def run_ai_insights(payload: AIInsightCreate, current=Depends(get_current_
     by_strategy = compute_breakdown(trades, "strategy_id")
     by_emotion = compute_breakdown(trades, "emotion")
     by_symbol = compute_breakdown(trades, "symbol")[:10]
+    by_session = compute_breakdown(trades, "session")
+    by_dow = compute_breakdown(trades, "day_of_week")
     # recent trades sample
     closed = sorted(
         [t for t in trades if t.get("status") == "closed"],
@@ -424,7 +443,11 @@ async def run_ai_insights(payload: AIInsightCreate, current=Depends(get_current_
         {
             "symbol": t.get("symbol"),
             "side": t.get("side"),
+            "qty": t.get("quantity"),
+            "point_value": t.get("point_value"),
+            "session": t.get("session"),
             "pnl": t.get("pnl"),
+            "r": t.get("r_multiple"),
             "emotion": t.get("emotion"),
             "strategy_id": t.get("strategy_id"),
             "notes": (t.get("notes") or "")[:200],
@@ -436,6 +459,7 @@ async def run_ai_insights(payload: AIInsightCreate, current=Depends(get_current_
         response = await generate_insights(
             summary, by_strategy, by_emotion, by_symbol, sample,
             preset=payload.prompt_preset, custom_prompt=payload.custom_prompt,
+            by_session=by_session, by_day_of_week=by_dow,
         )
     except Exception as e:
         logger.exception("AI insights generation failed")

@@ -40,13 +40,13 @@ export default function LoginPage() {
             <ActivitySquare className="w-5.5 h-5.5 text-white" />
           </div>
           <div>
-            <p className="font-display text-xl font-semibold">Edge<span className="text-primary">Journal</span></p>
-            <p className="text-xs text-muted-foreground">Trade smarter. Journal everything.</p>
+            <p className="font-display text-xl font-semibold">Edge<span className="text-primary">Futures</span></p>
+            <p className="text-xs text-muted-foreground">Trade futures smarter. Journal everything.</p>
           </div>
         </div>
 
         <h1 className="text-3xl font-display font-semibold tracking-tight">Welcome back</h1>
-        <p className="text-sm text-muted-foreground mt-1">Sign in to your trading journal.</p>
+        <p className="text-sm text-muted-foreground mt-1">Sign in to your futures journal.</p>
 
         <form onSubmit={onSubmit} className="mt-7 space-y-4">
           <div className="space-y-1.5">

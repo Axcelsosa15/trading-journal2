@@ -73,7 +73,9 @@ def prepare_for_mongo(doc: dict) -> dict:
 
 
 def compute_pnl(trade: dict) -> dict:
-    """Compute P&L for a trade. Modifies trade in place and returns it."""
+    """Compute P&L for a trade. Modifies trade in place and returns it.
+    For futures (market_type='futures'), uses point_value: gross = (move) * qty * point_value.
+    """
     side = trade.get("side", "long")
     qty = float(trade.get("quantity") or 0)
     entry = float(trade.get("entry_price") or 0)
@@ -82,28 +84,37 @@ def compute_pnl(trade: dict) -> dict:
     comm = float(trade.get("commission") or 0)
     sl = trade.get("stop_loss")
     status = trade.get("status", "closed")
+    market = trade.get("market_type", "futures")
+    pv = trade.get("point_value")
 
     if status == "closed" and exit_p is not None:
         exit_p = float(exit_p)
-        if side == "long":
-            gross = (exit_p - entry) * qty
+        move = (exit_p - entry) if side == "long" else (entry - exit_p)
+        if market == "futures" and pv:
+            multiplier = float(pv)
+            gross = move * qty * multiplier
+            cost_basis = abs(entry * qty * multiplier) if entry and qty else 0
         else:
-            gross = (entry - exit_p) * qty
+            gross = move * qty
+            cost_basis = abs(entry * qty) if entry and qty else 0
         pnl = gross - fees - comm
-        cost_basis = abs(entry * qty) if entry and qty else 0
         pnl_pct = (pnl / cost_basis * 100) if cost_basis > 0 else 0
         trade["pnl"] = round(pnl, 2)
         trade["pnl_percent"] = round(pnl_pct, 2)
 
         # R-multiple
         if sl is not None and entry:
-            risk_per_share = abs(entry - float(sl))
-            if risk_per_share > 0:
-                if side == "long":
-                    r = (exit_p - entry) / risk_per_share
+            risk_per_unit = abs(entry - float(sl))
+            if risk_per_unit > 0:
+                if market == "futures" and pv:
+                    r_denom = risk_per_unit * float(pv) * qty
+                    if r_denom > 0:
+                        trade["r_multiple"] = round((gross) / r_denom, 2)
+                    else:
+                        trade["r_multiple"] = None
                 else:
-                    r = (entry - exit_p) / risk_per_share
-                trade["r_multiple"] = round(r, 2)
+                    r = (exit_p - entry) / risk_per_unit if side == "long" else (entry - exit_p) / risk_per_unit
+                    trade["r_multiple"] = round(r, 2)
             else:
                 trade["r_multiple"] = None
         else:
@@ -122,7 +133,16 @@ def parse_dt(v: Any) -> Optional[datetime]:
         return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
     if isinstance(v, str):
         try:
-            return datetime.fromisoformat(v.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            # Ensure timezone-aware
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
         except Exception:
+            # Try a few common formats
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y"):
+                try:
+                    dt = datetime.strptime(v, fmt)
+                    return dt.replace(tzinfo=timezone.utc)
+                except Exception:
+                    continue
             return None
     return None

@@ -45,16 +45,20 @@ class Attachment(BaseModel):
 
 
 class TradeBase(BaseModel):
-    market_type: MARKET_TYPES = "stocks"
+    market_type: MARKET_TYPES = "futures"
     symbol: str
     side: SIDE_TYPES = "long"
-    quantity: float = 0.0
+    quantity: float = 0.0  # contracts for futures
     entry_price: float = 0.0
     exit_price: Optional[float] = None
     stop_loss: Optional[float] = None
     take_profit: Optional[float] = None
     fees: float = 0.0
     commission: float = 0.0
+    # Futures specifics
+    point_value: Optional[float] = None  # $ per point per contract (e.g., ES=50, NQ=20, MES=5, MNQ=2)
+    tick_size: Optional[float] = None    # minimum price increment
+    session: Optional[str] = None        # "RTH", "Globex", "Asia", "London", "NY-AM", "NY-PM"
     entry_time: Optional[datetime] = None
     exit_time: Optional[datetime] = None
     status: STATUS_TYPES = "closed"
@@ -85,6 +89,9 @@ class TradeUpdate(BaseModel):
     take_profit: Optional[float] = None
     fees: Optional[float] = None
     commission: Optional[float] = None
+    point_value: Optional[float] = None
+    tick_size: Optional[float] = None
+    session: Optional[str] = None
     entry_time: Optional[datetime] = None
     exit_time: Optional[datetime] = None
     status: Optional[STATUS_TYPES] = None

@@ -1,11 +1,16 @@
-symbol,side,quantity,entry_price,exit_price,entry_time,exit_time,fees,commission,market_type,notes
-AAPL,buy,100,175.50,180.25,2026-05-10 09:31:00,2026-05-10 14:15:00,1.00,1.00,stocks,Breakout above resistance
-TSLA,sell,50,265.00,259.50,2026-05-11 10:00:00,2026-05-11 11:30:00,0.50,0.50,stocks,Short on rejection at MA
-BTCUSDT,buy,0.05,67000,68500,2026-05-12 14:00:00,2026-05-13 18:00:00,5,0,crypto,Swing long BTC
-EURUSD,buy,10000,1.0850,1.0820,2026-05-13 08:00:00,2026-05-13 12:00:00,0,2,forex,Stopped out on news
-NVDA,buy,30,920,945,2026-05-14 09:35:00,2026-05-14 10:45:00,1,1,stocks,Earnings momentum play
-SPY,sell,20,520,518,2026-05-15 09:30:00,2026-05-15 09:55:00,0.5,0.5,stocks,Quick scalp on gap fade
-MSFT,buy,40,420,430,2026-05-16 10:00:00,2026-05-16 15:30:00,1,1,stocks,Hold to close
-GOOGL,buy,15,180,175,2026-05-17 09:45:00,2026-05-17 14:00:00,1,1,stocks,Cut loss at SL
-ETHUSDT,sell,0.5,3800,3700,2026-05-18 12:00:00,2026-05-19 04:00:00,3,0,crypto,Short ETH bounce
-GBPUSD,sell,5000,1.275,1.272,2026-05-20 09:00:00,2026-05-20 11:00:00,0,1,forex,Sold rally
+symbol,side,quantity,entry_price,exit_price,entry_time,exit_time,commission,session,strategy,notes
+ES,long,2,5260.25,5265.75,2026-05-10 09:35:00,2026-05-10 10:12:00,4.50,ny_am,Opening Range Breakout,Clean ORB long
+MES,long,5,5260.50,5263.25,2026-05-10 10:30:00,2026-05-10 11:15:00,5.00,ny_am,Trend Pullback,Added to winner on retest
+NQ,short,1,18450,18420,2026-05-11 09:35:00,2026-05-11 09:55:00,2.25,ny_am,Reversal,Failed breakout short
+CL,long,1,72.15,72.65,2026-05-11 13:00:00,2026-05-11 14:30:00,2.25,ny_pm,EIA News,Bullish inventory draw
+GC,long,1,2380.0,2374.5,2026-05-12 02:00:00,2026-05-12 04:00:00,2.25,london,Breakout,Stopped out on London session
+MNQ,long,3,18600,18650,2026-05-13 09:32:00,2026-05-13 10:00:00,3.75,ny_am,ORB,Quick scalp
+ES,short,1,5275.5,5278.25,2026-05-13 14:00:00,2026-05-13 14:25:00,2.25,ny_pm,Mean Reversion,Faded high; took loss
+RTY,long,1,2105.0,2112.5,2026-05-14 10:00:00,2026-05-14 14:00:00,2.25,rth,Trend Day,Held to power hour
+NQ,long,1,18720,18785,2026-05-15 09:35:00,2026-05-15 11:00:00,2.25,ny_am,Gap Fill,Gap and go continuation
+MES,short,4,5240.75,5234.50,2026-05-16 09:40:00,2026-05-16 10:05:00,4.00,ny_am,Reversal,VWAP rejection
+CL,short,1,71.45,71.85,2026-05-17 09:30:00,2026-05-17 12:00:00,2.25,rth,Counter-Trend,Stopped out; should have respected trend
+ZN,long,2,108.21875,108.28125,2026-05-20 09:00:00,2026-05-20 11:00:00,4.50,ny_am,FOMC,Bond rally on data
+ES,long,1,5300.25,5298.5,2026-05-21 10:00:00,2026-05-21 10:15:00,2.25,ny_am,FOMO,Chased breakout - revenge after loss
+MNQ,long,2,18900,18960,2026-05-22 04:00:00,2026-05-22 06:00:00,2.50,london,Asia Range Breakout,Patient setup
+GC,long,1,2410.0,2425.5,2026-05-23 09:30:00,2026-05-23 13:00:00,2.25,rth,News Catalyst,CPI tailwind

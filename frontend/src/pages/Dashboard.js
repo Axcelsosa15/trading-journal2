@@ -5,9 +5,9 @@ import { KpiCard } from '@/components/common/KpiCard';
 import { Empty } from '@/components/common/Empty';
 import { Button } from '@/components/ui/button';
 import { fmtCurrency, fmtPercent, fmtNumber, pnlClass, fmtDate, fmtDateTime } from '@/lib/format';
-import { TrendingUp, TrendingDown, Percent, Target, Activity, AlertTriangle, BarChart2, PlusCircle, Sparkles } from 'lucide-react';
+import { TrendingUp, TrendingDown, Percent, Target, Activity, AlertTriangle, BarChart2, PlusCircle, Sparkles, Layers, Clock } from 'lucide-react';
 import {
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar, Cell,
 } from 'recharts';
 import CalendarHeatmap from '@/components/charts/CalendarHeatmap';
 import { cn } from '@/lib/utils';
@@ -17,21 +17,27 @@ export default function DashboardPage() {
   const [equity, setEquity] = useState([]);
   const [calendar, setCalendar] = useState([]);
   const [recent, setRecent] = useState([]);
+  const [bySymbol, setBySymbol] = useState([]);
+  const [bySession, setBySession] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [s, e, c, t] = await Promise.all([
+        const [s, e, c, t, bs, bss] = await Promise.all([
           api.get('/analytics/summary'),
           api.get('/analytics/equity'),
           api.get('/analytics/calendar'),
           api.get('/trades', { params: { limit: 8 } }),
+          api.get('/analytics/breakdown', { params: { by: 'symbol' } }),
+          api.get('/analytics/breakdown', { params: { by: 'session' } }),
         ]);
         setSummary(s.data);
         setEquity(e.data);
         setCalendar(c.data);
         setRecent(t.data);
+        setBySymbol(bs.data);
+        setBySession(bss.data);
       } finally {
         setLoading(false);
       }
@@ -48,13 +54,14 @@ export default function DashboardPage() {
   }
 
   const noData = !summary || summary.total_trades === 0;
+  const topContracts = bySymbol.slice(0, 8);
 
   return (
     <div className="space-y-6" data-testid="dashboard-root">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <h1 className="text-3xl sm:text-4xl font-display font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground mt-1">Your trading edge at a glance.</p>
+          <p className="text-sm text-muted-foreground mt-1">Your futures trading edge at a glance.</p>
         </div>
         <div className="flex gap-2">
           <Link to="/trades/new"><Button data-testid="dashboard-add-trade" className="rounded-xl"><PlusCircle className="w-4 h-4 mr-2" /> New Trade</Button></Link>
@@ -62,7 +69,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* KPI strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <KpiCard testid="kpi-net-pnl" label="Net P&L" value={fmtCurrency(summary.net_pnl)} sublabel={`${summary.closed_trades} closed trades`} icon={summary.net_pnl >= 0 ? TrendingUp : TrendingDown} accent={pnlClass(summary.net_pnl)} />
         <KpiCard testid="kpi-win-rate" label="Win Rate" value={fmtPercent(summary.win_rate)} sublabel={`${summary.wins}W / ${summary.losses}L`} icon={Percent} accent={summary.win_rate >= 50 ? 'text-pnl-pos' : 'text-pnl-neutral'} />
@@ -70,7 +76,6 @@ export default function DashboardPage() {
         <KpiCard testid="kpi-max-dd" label="Max Drawdown" value={fmtCurrency(summary.max_drawdown)} sublabel={`Sharpe ${fmtNumber(summary.sharpe_ratio, 2)}`} icon={AlertTriangle} accent="text-pnl-neg" />
       </div>
 
-      {/* Secondary KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <KpiCard testid="kpi-avg-win" label="Avg Win" value={fmtCurrency(summary.avg_win)} icon={TrendingUp} accent="text-pnl-pos" />
         <KpiCard testid="kpi-avg-loss" label="Avg Loss" value={fmtCurrency(summary.avg_loss)} icon={TrendingDown} accent="text-pnl-neg" />
@@ -78,7 +83,6 @@ export default function DashboardPage() {
         <KpiCard testid="kpi-worst" label="Worst Trade" value={fmtCurrency(summary.worst_trade)} icon={Activity} accent="text-pnl-neg" />
       </div>
 
-      {/* Equity + Calendar */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <div className="lg:col-span-7 glass-card p-5" data-testid="equity-chart-card">
           <div className="flex items-center justify-between mb-4">
@@ -126,7 +130,68 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Recent trades */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="glass-card p-5" data-testid="by-contract-card">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-display font-semibold flex items-center gap-2"><Layers className="w-4 h-4" /> Top Contracts</h2>
+              <p className="text-xs text-muted-foreground">P&L by symbol</p>
+            </div>
+          </div>
+          {topContracts.length === 0 ? (
+            <Empty icon={Layers} title="No data yet" description="Log futures trades to see contract performance." />
+          ) : (
+            <div className="h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={topContracts} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
+                  <CartesianGrid stroke="hsl(var(--border)/0.5)" strokeDasharray="3 6" vertical={false} />
+                  <XAxis dataKey="key" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))', fontFamily: 'JetBrains Mono' }} stroke="hsl(var(--border))" />
+                  <YAxis tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} stroke="hsl(var(--border))" tickFormatter={(v) => `$${v}`} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 12, fontSize: 12 }}
+                    formatter={(value, name, props) => [fmtCurrency(value), `P&L (${props.payload.trades} trades)`]}
+                  />
+                  <Bar dataKey="pnl" radius={[6, 6, 0, 0]}>
+                    {topContracts.map((d, i) => (
+                      <Cell key={i} fill={d.pnl >= 0 ? 'hsl(152 55% 42%)' : 'hsl(0 72% 55%)'} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+
+        <div className="glass-card p-5" data-testid="by-session-card">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-display font-semibold flex items-center gap-2"><Clock className="w-4 h-4" /> By Session</h2>
+              <p className="text-xs text-muted-foreground">When are you profitable?</p>
+            </div>
+          </div>
+          {bySession.length === 0 ? (
+            <Empty icon={Clock} title="No session data" description="Tag your trades with sessions (RTH, Globex, NY AM, etc.)." />
+          ) : (
+            <ul className="space-y-2.5">
+              {bySession.map(s => {
+                const max = Math.max(1, ...bySession.map(x => Math.abs(x.pnl)));
+                const ratio = Math.min(1, Math.abs(s.pnl) / max);
+                return (
+                  <li key={s.key} className="flex items-center gap-3">
+                    <span className="w-24 text-xs font-medium capitalize">{(s.key || '').replace('_', ' ')}</span>
+                    <div className="flex-1 h-6 bg-secondary/40 rounded-lg overflow-hidden relative">
+                      <div className={cn('h-full', s.pnl >= 0 ? 'bg-emerald-500/40' : 'bg-rose-500/40')} style={{ width: `${ratio * 100}%` }} />
+                      <span className="absolute left-2 top-0.5 text-[10px] text-muted-foreground">{s.trades} trades • {fmtPercent(s.win_rate, 0)} WR</span>
+                    </div>
+                    <span className={cn('text-sm font-semibold tabular w-20 text-right', pnlClass(s.pnl))}>{fmtCurrency(s.pnl)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </div>
+
       <div className="glass-card p-5" data-testid="recent-trades-card">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -145,10 +210,10 @@ export default function DashboardPage() {
                 <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground border-b border-border/60">
                   <th className="py-2.5 pr-3">Symbol</th>
                   <th className="py-2.5 pr-3">Side</th>
-                  <th className="py-2.5 pr-3">Market</th>
                   <th className="py-2.5 pr-3 text-right">Qty</th>
                   <th className="py-2.5 pr-3 text-right">Entry</th>
                   <th className="py-2.5 pr-3 text-right">Exit</th>
+                  <th className="py-2.5 pr-3">Session</th>
                   <th className="py-2.5 pr-3 text-right">P&L</th>
                   <th className="py-2.5 pr-3">Date</th>
                 </tr>
@@ -165,10 +230,10 @@ export default function DashboardPage() {
                         {t.side}
                       </span>
                     </td>
-                    <td className="py-2.5 pr-3 text-muted-foreground capitalize">{t.market_type}</td>
-                    <td className="py-2.5 pr-3 text-right tabular">{fmtNumber(t.quantity, 4)}</td>
+                    <td className="py-2.5 pr-3 text-right tabular">{fmtNumber(t.quantity, 0)}</td>
                     <td className="py-2.5 pr-3 text-right tabular">{fmtNumber(t.entry_price, 2)}</td>
                     <td className="py-2.5 pr-3 text-right tabular">{t.exit_price ? fmtNumber(t.exit_price, 2) : '—'}</td>
+                    <td className="py-2.5 pr-3 text-muted-foreground text-xs capitalize">{(t.session || '').replace('_',' ') || '—'}</td>
                     <td className={cn('py-2.5 pr-3 text-right font-semibold tabular', pnlClass(t.pnl))}>{fmtCurrency(t.pnl)}</td>
                     <td className="py-2.5 pr-3 text-muted-foreground text-xs">{fmtDate(t.exit_time || t.entry_time)}</td>
                   </tr>
@@ -181,7 +246,7 @@ export default function DashboardPage() {
 
       {noData && (
         <div className="glass-card p-6 text-center">
-          <p className="text-sm text-muted-foreground">Pro tip: connect a broker, import a CSV, or add your first trade manually to see metrics light up.</p>
+          <p className="text-sm text-muted-foreground">Pro tip: Import a CSV from Tradovate, NinjaTrader or TopStep — or add your first futures trade manually using the quick contract picker (ES, NQ, MES, MNQ…).</p>
         </div>
       )}
     </div>

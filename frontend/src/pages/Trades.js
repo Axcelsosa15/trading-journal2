@@ -126,6 +126,7 @@ export default function TradesPage() {
                   <th className="py-3 px-2 text-right">Exit</th>
                   <th className="py-3 px-2 text-right">P&L</th>
                   <th className="py-3 px-2 text-right">R</th>
+                  <th className="py-3 px-2">Session</th>
                   <th className="py-3 px-2">Strategy</th>
                   <th className="py-3 px-2">Emotion</th>
                   <th className="py-3 px-2">Date</th>
@@ -150,6 +151,7 @@ export default function TradesPage() {
                     <td className="py-2.5 px-2 text-right tabular">{t.exit_price ? fmtNumber(t.exit_price, 4) : '—'}</td>
                     <td className={cn('py-2.5 px-2 text-right font-semibold tabular', pnlClass(t.pnl))}>{fmtCurrency(t.pnl)}</td>
                     <td className="py-2.5 px-2 text-right tabular text-xs text-muted-foreground">{t.r_multiple !== null && t.r_multiple !== undefined ? fmtR(t.r_multiple) : '—'}</td>
+                    <td className="py-2.5 px-2 text-xs text-muted-foreground capitalize">{(t.session || '').replace('_',' ') || '—'}</td>
                     <td className="py-2.5 px-2 text-xs">
                       {t.strategy_id ? <Badge variant="secondary" className="font-normal">{stratMap[t.strategy_id]?.name || 'Unknown'}</Badge> : <span className="text-muted-foreground">—</span>}
                     </td>

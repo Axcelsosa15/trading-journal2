@@ -11,9 +11,9 @@ from utils import parse_dt
 
 
 FIELD_ALIASES = {
-    "symbol": ["symbol", "ticker", "instrument", "pair", "market"],
+    "symbol": ["symbol", "ticker", "instrument", "pair", "market", "contract"],
     "side": ["side", "direction", "type", "action"],
-    "quantity": ["qty", "quantity", "size", "volume", "units", "shares", "amount"],
+    "quantity": ["qty", "quantity", "size", "volume", "units", "shares", "amount", "contracts"],
     "entry_price": ["entry", "entry_price", "open price", "open_price", "price", "buy price"],
     "exit_price": ["exit", "exit_price", "close price", "close_price", "sell price"],
     "entry_time": ["entry_time", "open_time", "open time", "entry date", "date", "time", "datetime"],
@@ -26,6 +26,9 @@ FIELD_ALIASES = {
     "strategy": ["strategy", "setup"],
     "notes": ["notes", "comment", "comments"],
     "market_type": ["market_type", "asset_class", "market", "asset"],
+    "point_value": ["point_value", "point value", "multiplier", "contract_multiplier"],
+    "tick_size": ["tick_size", "tick size"],
+    "session": ["session", "trading_session"],
 }
 
 
@@ -64,18 +67,24 @@ def _to_float(v: Any) -> float:
 
 def _norm_market(v: str, symbol: str = "") -> str:
     v = (v or "").lower().strip()
+    if v in ("futures", "future"):
+        return "futures"
     if v in ("forex", "fx"):
         return "forex"
     if v in ("crypto", "cryptocurrency"):
         return "crypto"
-    if v in ("futures", "future"):
-        return "futures"
     if v in ("options", "option"):
         return "options"
     if v in ("stocks", "stock", "equity", "equities"):
         return "stocks"
-    # infer from symbol
-    s = (symbol or "").upper()
+    # infer from symbol - futures contracts first
+    s = (symbol or "").upper().strip()
+    futures_set = {"ES","MES","NQ","MNQ","YM","MYM","RTY","M2K","CL","MCL","NG","RB",
+                   "GC","MGC","SI","SIL","HG","PL","ZN","ZB","ZF","ZT","6E","M6E",
+                   "6B","6J","6A","6C","BTC","MBT","ETH","MET","ZC","ZS","ZW"}
+    base = s.rstrip("0123456789").rstrip("HMUZFGJKNQVX")  # strip month codes
+    if s in futures_set or base in futures_set:
+        return "futures"
     if any(s.endswith(x) for x in ["USDT", "BTC", "ETH", "USDC"]):
         return "crypto"
     if "/" in s and len(s) <= 8:
@@ -116,12 +125,27 @@ def parse_csv(content: bytes, user_id: str) -> Dict[str, Any]:
             sl = _to_float(row.get(mapping.get("stop_loss", ""))) if mapping.get("stop_loss") else None
             tp = _to_float(row.get(mapping.get("take_profit", ""))) if mapping.get("take_profit") else None
             market = _norm_market(row.get(mapping.get("market_type", ""), ""), sym)
+            pv = _to_float(row.get(mapping.get("point_value", ""))) if mapping.get("point_value") else None
+            tick = _to_float(row.get(mapping.get("tick_size", ""))) if mapping.get("tick_size") else None
+            sess = row.get(mapping.get("session", ""), "") if mapping.get("session") else None
+            # If futures and no point_value, try to look it up from common contracts
+            if market == "futures" and not pv:
+                try:
+                    from futures_contracts import CONTRACTS_BY_SYMBOL
+                    base = str(sym).upper().strip().rstrip("0123456789").rstrip("HMUZFGJKNQVX")
+                    if base in CONTRACTS_BY_SYMBOL:
+                        c = CONTRACTS_BY_SYMBOL[base]
+                        pv = c["point_value"]
+                        if not tick:
+                            tick = c["tick_size"]
+                except Exception:
+                    pass
             now = datetime.now(timezone.utc).isoformat()
             t = {
                 "id": str(uuid.uuid4()),
                 "user_id": user_id,
                 "market_type": market,
-                "symbol": str(sym).strip(),
+                "symbol": str(sym).strip().upper(),
                 "side": side,
                 "quantity": qty,
                 "entry_price": entry,
@@ -130,6 +154,9 @@ def parse_csv(content: bytes, user_id: str) -> Dict[str, Any]:
                 "take_profit": tp,
                 "fees": fees,
                 "commission": commission,
+                "point_value": pv,
+                "tick_size": tick,
+                "session": sess or None,
                 "entry_time": entry_t.isoformat() if entry_t else now,
                 "exit_time": exit_t.isoformat() if exit_t else None,
                 "status": "closed" if exit_p else "open",

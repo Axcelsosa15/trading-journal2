@@ -150,7 +150,7 @@ def compute_calendar(trades: List[dict]) -> List[Dict[str, Any]]:
 
 
 def compute_breakdown(trades: List[dict], key: str) -> List[Dict[str, Any]]:
-    """Breakdown by strategy_id, symbol, market_type, emotion, day_of_week."""
+    """Breakdown by strategy_id, symbol, market_type, emotion, session, hour, day_of_week."""
     closed = [t for t in trades if t.get("status") == "closed" and t.get("exit_price") is not None]
     buckets = defaultdict(lambda: {"pnl": 0.0, "trades": 0, "wins": 0})
     for t in closed:
@@ -159,6 +159,11 @@ def compute_breakdown(trades: List[dict], key: str) -> List[Dict[str, Any]]:
             if not dt:
                 continue
             k = dt.strftime("%A")
+        elif key == "hour":
+            dt = parse_dt(t.get("entry_time")) or parse_dt(t.get("exit_time")) or parse_dt(t.get("created_at"))
+            if not dt:
+                continue
+            k = dt.strftime("%H:00")
         else:
             k = t.get(key) or "unknown"
             if isinstance(k, list):
