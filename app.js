@@ -63,7 +63,7 @@
     selectedId: null,
     fResult: "all", fSymbol: "all", fSetup: "all",
     calMonth: thisMonth(),
-    showAdd: false, draft: blankDraft(),
+    showAdd: false, editId: null, draft: blankDraft(),
     showJournalAdd: false, jdraft: blankJournalDraft(),
   };
 
@@ -129,6 +129,7 @@
     var email = (state.authEmail || "").trim();
     var password = state.authPass || "";
     if (!email || !password) { state.authError = "Introduce email y contraseña."; render(); return; }
+    if (state.authMode === "signup" && password.length < 8) { state.authError = "La contraseña debe tener al menos 8 caracteres."; render(); return; }
     state.authBusy = true; state.authError = ""; render();
     try {
       if (state.authMode === "signup") {
@@ -149,16 +150,53 @@
   }
   function logout() { SB.auth.signOut(); }
 
+  // ---------- CSV export ----------
+  function csvCell(v) {
+    var s = v == null ? "" : String(v);
+    if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+  function exportCSV(rows) {
+    if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
+    var headers = ["Fecha", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "Setup", "Emoción", "Valoración", "PnL", "Notas"];
+    var lines = [headers.map(csvCell).join(",")];
+    rows.forEach(function (t) {
+      lines.push([t.date, t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.setup, t.emotion, t.rating, t.pnl, t.note].map(csvCell).join(","));
+    });
+    var csv = "﻿" + lines.join("\r\n"); // BOM so Excel reads accents correctly
+    var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = "bitacora-operaciones-" + todayISO() + ".csv";
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
   // ---------- mutations ----------
   async function saveTrade() {
     var d = state.draft;
     if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
     var pnl = pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
     var row = { date: d.date, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl };
-    var res = await SB.from("trades").insert(row).select().single();
-    if (res.error) { window.alert("No se pudo guardar la operación: " + res.error.message); return; }
-    state.trades = [coerceTrade(res.data)].concat(state.trades);
+    if (state.editId) {
+      var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
+      if (up.error) { window.alert("No se pudo actualizar la operación: " + up.error.message); return; }
+      var updated = coerceTrade(up.data);
+      state.trades = state.trades.map(function (t) { return t.id === updated.id ? updated : t; });
+    } else {
+      var res = await SB.from("trades").insert(row).select().single();
+      if (res.error) { window.alert("No se pudo guardar la operación: " + res.error.message); return; }
+      state.trades = [coerceTrade(res.data)].concat(state.trades);
+    }
     closeAdd();
+    render();
+  }
+  function openEdit(t) {
+    state.editId = t.id;
+    state.draft = { symbol: t.symbol, type: t.type, side: t.side, contracts: t.contracts, entry: t.entry, exit: t.exit, date: t.date, setup: t.setup, emotion: t.emotion, rating: t.rating, note: t.note };
+    state.selectedId = null;
+    state.showAdd = true;
     render();
   }
   function select(id) { state.selectedId = id; render(); }
@@ -187,8 +225,8 @@
     m += dir; if (m < 1) { m = 12; y--; } if (m > 12) { m = 1; y++; }
     state.calMonth = y + "-" + pad(m); render();
   }
-  function openAdd() { state.draft = blankDraft(); state.showAdd = true; renderModal(); }
-  function closeAdd() { state.showAdd = false; renderModal(); }
+  function openAdd() { state.editId = null; state.draft = blankDraft(); state.showAdd = true; renderModal(); }
+  function closeAdd() { state.showAdd = false; state.editId = null; renderModal(); }
   function openJournalAdd() { state.jdraft = blankJournalDraft(); state.showJournalAdd = true; renderModal(); }
   function closeJournalAdd() { state.showJournalAdd = false; renderModal(); }
 
@@ -305,7 +343,7 @@
     var signup = state.authMode === "signup";
     var emailInput = h("input", { type: "email", placeholder: "tu@email.com", autocomplete: "email", style: authInputStyle(), onInput: function (e) { state.authEmail = e.target.value; } });
     emailInput.value = state.authEmail;
-    var passInput = h("input", { type: "password", placeholder: signup ? "Mínimo 6 caracteres" : "Tu contraseña", autocomplete: signup ? "new-password" : "current-password", style: authInputStyle(), onInput: function (e) { state.authPass = e.target.value; } });
+    var passInput = h("input", { type: "password", placeholder: signup ? "Mínimo 8 caracteres" : "Tu contraseña", autocomplete: signup ? "new-password" : "current-password", style: authInputStyle(), onInput: function (e) { state.authPass = e.target.value; } });
     passInput.value = state.authPass;
     passInput.addEventListener("keydown", function (e) { if (e.key === "Enter") doAuth(); });
     emailInput.addEventListener("keydown", function (e) { if (e.key === "Enter") passInput.focus(); });
@@ -525,7 +563,9 @@
       h("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px;flex-wrap:wrap;" },
         h("div", { style: "display:flex;gap:4px;background:#F1EDE5;padding:4px;border-radius:10px;" }, fSeg("all", "Todas"), fSeg("win", "Ganadoras"), fSeg("loss", "Perdedoras")),
         h("div", { style: "display:flex;gap:10px;align-items:center;" }, symbolSelect, setupSelect,
-          h("span", { style: "font-size:12.5px;color:#807B72;font-family:'Geist Mono',monospace;" }, ft.length + " ops · " + signed(ft.reduce(function (a, t) { return a + t.pnl; }, 0))))),
+          h("span", { style: "font-size:12.5px;color:#807B72;font-family:'Geist Mono',monospace;" }, ft.length + " ops · " + signed(ft.reduce(function (a, t) { return a + t.pnl; }, 0))),
+          h("button", { title: "Exportar a CSV", onClick: function () { exportCSV(ft); }, style: "display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:#16181C;background:#fff;border:1px solid #E2DDD3;border-radius:9px;padding:8px 12px;", hoverBg: "#FAF8F4" },
+            icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>'), "CSV"))),
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;overflow:hidden;" }, headerRow, bodyRows));
   }
 
@@ -686,8 +726,10 @@
             h("div", { style: "text-align:right;" }, h("div", { style: "font-size:11px;color:#807B72;margin-bottom:5px;" }, "Valoración"), h("span", { style: "color:#D8B23E;letter-spacing:2px;font-size:15px;" }, stars(st.rating)))),
           h("div", { style: "margin-bottom:8px;font-size:11px;color:#807B72;" }, "Notas"),
           h("div", { style: "background:#FBFAF7;border:1px solid #ECE7DD;border-radius:11px;padding:15px;font-size:13.5px;line-height:1.6;color:#33312C;" }, note)),
-        h("div", { style: "padding:16px 22px;border-top:1px solid #ECE7DD;" },
-          h("button", { style: "width:100%;padding:11px;border-radius:10px;border:1px solid #F2D9D5;background:#FCF1EF;color:#D6483B;font-weight:600;font-size:13px;", hoverBg: "#FBEAE7", onClick: deleteSelected }, "Eliminar operación"))));
+        h("div", { style: "padding:16px 22px;border-top:1px solid #ECE7DD;display:flex;gap:10px;" },
+          h("button", { style: "flex:1;padding:11px;border-radius:10px;border:none;background:#16181C;color:#fff;font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:center;gap:7px;", onClick: function () { openEdit(st); } },
+            icon('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>'), "Editar"),
+          h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #F2D9D5;background:#FCF1EF;color:#D6483B;font-weight:600;font-size:13px;", hoverBg: "#FBEAE7", onClick: deleteSelected }, "Eliminar"))));
   }
 
   // ===================================================================
@@ -739,8 +781,9 @@
 
   function addModal() {
     var inMono = "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;font-family:'Geist Mono',monospace;";
+    var editing = state.editId != null;
     var previewSpan = h("span", { style: "font-family:'Geist Mono',monospace;font-size:18px;font-weight:600;" });
-    var saveBtn = h("button", { onClick: saveTrade }, "Guardar operación");
+    var saveBtn = h("button", { onClick: saveTrade }, editing ? "Guardar cambios" : "Guardar operación");
     function refresh() {
       var dp = draftPnl();
       previewSpan.textContent = dp.valid ? signed(dp.pnl) : "—";
@@ -762,9 +805,10 @@
         field("Contratos", fieldInput(d, "contracts", { type: "number", min: "1", style: inMono, onInput: function (e) { d.contracts = e.target.value; refresh(); } })),
         field("Entrada", fieldInput(d, "entry", { type: "number", step: "0.01", placeholder: "0.00", style: inMono, onInput: function (e) { d.entry = e.target.value; refresh(); } })),
         field("Salida", fieldInput(d, "exit", { type: "number", step: "0.01", placeholder: "0.00", style: inMono, onInput: function (e) { d.exit = e.target.value; refresh(); } }))),
-      h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
+      h("div", { style: "display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;" },
         field("Setup", fieldSelect(d, "setup", [["Ruptura", "Ruptura"], ["Reversión", "Reversión"], ["Pullback", "Pullback"]])),
-        field("Emoción", fieldSelect(d, "emotion", [["Tranquilo", "Tranquilo"], ["Confiado", "Confiado"], ["Ansioso", "Ansioso"], ["FOMO", "FOMO"]]))),
+        field("Emoción", fieldSelect(d, "emotion", [["Tranquilo", "Tranquilo"], ["Confiado", "Confiado"], ["Ansioso", "Ansioso"], ["FOMO", "FOMO"]])),
+        field("Valoración", fieldSelect(d, "rating", [["1", "★"], ["2", "★★"], ["3", "★★★"], ["4", "★★★★"], ["5", "★★★★★"]]))),
       field("Notas", note),
       h("div", { style: "display:flex;align-items:center;justify-content:space-between;background:#FBFAF7;border:1px solid #ECE7DD;border-radius:11px;padding:13px 16px;" },
         h("span", { style: "font-size:12.5px;color:#807B72;" }, "P&L estimado"), previewSpan),
@@ -773,7 +817,7 @@
       h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #E2DDD3;background:#fff;font-weight:600;font-size:13.5px;", hoverBg: "#FAF8F4", onClick: closeAdd }, "Cancelar"),
       saveBtn,
     ];
-    var frame = modalFrame("Nueva operación", closeAdd, body, footer, 540);
+    var frame = modalFrame(editing ? "Editar operación" : "Nueva operación", closeAdd, body, footer, 540);
     refresh();
     return frame;
   }
@@ -810,6 +854,13 @@
   // ===================================================================
   // Boot
   // ===================================================================
+  // Anti-clickjacking: refuse to run framed by another site (no headers on Pages).
+  if (window.top !== window.self) {
+    try { window.top.location = window.self.location; } catch (e) { }
+    document.body.innerHTML = '<div style="font-family:sans-serif;padding:40px;color:#16181C;">Por seguridad, Bitácora no puede abrirse dentro de otra página.</div>';
+    return;
+  }
+
   SB.auth.onAuthStateChange(function (event, session) {
     if (event === "INITIAL_SESSION") return; // handled by getSession below
     state.user = session ? session.user : null;
