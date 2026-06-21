@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Bitácora — diario de trading: operaciones, calendario de resultados, analítica y diario.">
-  <!-- Security: scripts only from same origin (no inline scripts → XSS-resistant);
-       styles inline + Google Fonts; nothing else loads cross-origin. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'">
+  <!-- Security: no inline scripts (XSS-resistant); app code from same origin,
+       Supabase SDK from jsdelivr; network only to our own Supabase project. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://ajihczecndwznolgbrdc.supabase.co wss://ajihczecndwznolgbrdc.supabase.co; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <title>Bitácora · Trading Journal</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%2316181C'/%3E%3Crect x='4' y='9' width='3.4' height='11' rx='1' fill='%2316915B'/%3E%3Crect x='13' y='6' width='3.4' height='9' rx='1' fill='%23D6483B'/%3E%3C/svg%3E">
@@ -18,6 +18,7 @@
 <body>
   <div id="app"></div>
   <div id="modal-root"></div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
 </body>
 </html>
