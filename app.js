@@ -59,12 +59,13 @@
     authMode: "login", authEmail: "", authPass: "", authError: "", authBusy: false,
     loadingData: false,
     view: "dashboard",
-    trades: [], journal: [],
+    trades: [], journal: [], accounts: [],
     selectedId: null,
-    fResult: "all", fSymbol: "all", fSetup: "all",
+    fResult: "all", fSymbol: "all", fSetup: "all", fAccount: "all",
     calMonth: thisMonth(),
     showAdd: false, editId: null, draft: blankDraft(),
     showJournalAdd: false, jdraft: blankJournalDraft(),
+    showAccountAdd: false, accountEditId: null, accountDraft: blankAccountDraft(),
   };
 
   // ---------- helpers ----------
@@ -90,7 +91,10 @@
     return Math.round((Number(t.exit) - Number(t.entry)) * PV(t) * Number(t.contracts) * dir);
   }
   function blankDraft() {
-    return { symbol: "MES", type: "future", side: "long", contracts: 1, entry: "", exit: "", date: todayISO(), setup: "Ruptura", emotion: "Tranquilo", rating: 3, note: "" };
+    return { symbol: "MES", type: "future", side: "long", contracts: 1, entry: "", exit: "", date: todayISO(), setup: "Ruptura", emotion: "Tranquilo", rating: 3, note: "", account_id: "" };
+  }
+  function blankAccountDraft() {
+    return { name: "", kind: "fondeo", firm: "", balance: "", currency: "USD", phase: "", status: "activa", profit_target: "", max_drawdown: "", notes: "" };
   }
   function blankJournalDraft() {
     return { date: todayISO(), mood: "Enfocado", title: "", body: "", lesson: "" };
@@ -98,7 +102,10 @@
 
   // ---------- data access (Supabase) ----------
   function coerceTrade(r) {
-    return { id: r.id, date: r.date, symbol: r.symbol, type: r.type, side: r.side, contracts: Number(r.contracts), entry: Number(r.entry), exit: Number(r.exit), setup: r.setup, emotion: r.emotion, rating: Number(r.rating), note: r.note || "", pnl: Number(r.pnl) };
+    return { id: r.id, date: r.date, symbol: r.symbol, type: r.type, side: r.side, contracts: Number(r.contracts), entry: Number(r.entry), exit: Number(r.exit), setup: r.setup, emotion: r.emotion, rating: Number(r.rating), note: r.note || "", pnl: Number(r.pnl), account_id: r.account_id || null };
+  }
+  function coerceAccount(r) {
+    return { id: r.id, name: r.name, kind: r.kind, firm: r.firm || "", balance: Number(r.balance), currency: r.currency || "USD", phase: r.phase || "", status: r.status, profit_target: r.profit_target == null ? "" : Number(r.profit_target), max_drawdown: r.max_drawdown == null ? "" : Number(r.max_drawdown), notes: r.notes || "" };
   }
   function coerceJournal(r) {
     return { id: r.id, date: r.date, mood: r.mood, title: r.title, body: r.body || "", lesson: r.lesson || "" };
@@ -108,8 +115,10 @@
     try {
       var t = await SB.from("trades").select("*").order("date", { ascending: false }).order("created_at", { ascending: false });
       var j = await SB.from("journal").select("*").order("date", { ascending: false }).order("created_at", { ascending: false });
+      var a = await SB.from("accounts").select("*").order("created_at", { ascending: false });
       state.trades = (t.data || []).map(coerceTrade);
       state.journal = (j.data || []).map(coerceJournal);
+      state.accounts = (a.data || []).map(coerceAccount);
     } catch (e) { /* leave empty on error */ }
     state.loadingData = false;
     render();
@@ -158,10 +167,10 @@
   }
   function exportCSV(rows) {
     if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
-    var headers = ["Fecha", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "Setup", "Emoción", "Valoración", "PnL", "Notas"];
+    var headers = ["Fecha", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "Setup", "Emoción", "Valoración", "Cuenta", "PnL", "Notas"];
     var lines = [headers.map(csvCell).join(",")];
     rows.forEach(function (t) {
-      lines.push([t.date, t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.setup, t.emotion, t.rating, t.pnl, t.note].map(csvCell).join(","));
+      lines.push([t.date, t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl, t.note].map(csvCell).join(","));
     });
     var csv = "﻿" + lines.join("\r\n"); // BOM so Excel reads accents correctly
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -178,7 +187,7 @@
     var d = state.draft;
     if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
     var pnl = pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
-    var row = { date: d.date, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl };
+    var row = { date: d.date, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, account_id: d.account_id || null };
     if (state.editId) {
       var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
       if (up.error) { window.alert("No se pudo actualizar la operación: " + up.error.message); return; }
@@ -225,6 +234,58 @@
     m += dir; if (m < 1) { m = 12; y--; } if (m > 12) { m = 1; y++; }
     state.calMonth = y + "-" + pad(m); render();
   }
+  async function saveAccount() {
+    var d = state.accountDraft;
+    if (!d.name.trim()) return;
+    var row = {
+      name: d.name.trim(), kind: d.kind, firm: d.firm || null, balance: Number(d.balance) || 0, currency: d.currency || "USD",
+      phase: d.phase || null, status: d.status,
+      profit_target: d.profit_target === "" ? null : Number(d.profit_target),
+      max_drawdown: d.max_drawdown === "" ? null : Number(d.max_drawdown), notes: d.notes,
+    };
+    if (state.accountEditId) {
+      var up = await SB.from("accounts").update(row).eq("id", state.accountEditId).select().single();
+      if (up.error) { window.alert("No se pudo actualizar la cuenta: " + up.error.message); return; }
+      var u = coerceAccount(up.data);
+      state.accounts = state.accounts.map(function (a) { return a.id === u.id ? u : a; });
+    } else {
+      var res = await SB.from("accounts").insert(row).select().single();
+      if (res.error) { window.alert("No se pudo crear la cuenta: " + res.error.message); return; }
+      state.accounts = [coerceAccount(res.data)].concat(state.accounts);
+    }
+    closeAccountAdd();
+    render();
+  }
+  async function deleteAccount() {
+    var id = state.accountEditId;
+    if (!id) return;
+    if (!window.confirm("¿Eliminar esta cuenta? Las operaciones asociadas se conservarán pero quedarán sin cuenta.")) return;
+    var res = await SB.from("accounts").delete().eq("id", id);
+    if (res.error) { window.alert("No se pudo eliminar: " + res.error.message); return; }
+    state.accounts = state.accounts.filter(function (a) { return a.id !== id; });
+    state.trades = state.trades.map(function (t) { return t.account_id === id ? Object.assign({}, t, { account_id: null }) : t; });
+    closeAccountAdd();
+    render();
+  }
+  function openAccountAdd() { state.accountEditId = null; state.accountDraft = blankAccountDraft(); state.showAccountAdd = true; renderModal(); }
+  function openAccountEdit(a) {
+    state.accountEditId = a.id;
+    state.accountDraft = { name: a.name, kind: a.kind, firm: a.firm, balance: a.balance, currency: a.currency, phase: a.phase, status: a.status, profit_target: a.profit_target, max_drawdown: a.max_drawdown, notes: a.notes };
+    state.showAccountAdd = true; renderModal();
+  }
+  function closeAccountAdd() { state.showAccountAdd = false; state.accountEditId = null; renderModal(); }
+  function accountStats(accId) {
+    var ts = state.trades.filter(function (t) { return t.account_id === accId; });
+    var wins = ts.filter(function (t) { return t.pnl > 0; }).length;
+    var net = ts.reduce(function (a, t) { return a + t.pnl; }, 0);
+    return { count: ts.length, net: net, winRate: ts.length ? Math.round(wins / ts.length * 100) : 0 };
+  }
+  function accountName(accId) {
+    if (!accId) return null;
+    var a = state.accounts.find(function (x) { return x.id === accId; });
+    return a ? a.name : null;
+  }
+
   function openAdd() { state.editId = null; state.draft = blankDraft(); state.showAdd = true; renderModal(); }
   function closeAdd() { state.showAdd = false; state.editId = null; renderModal(); }
   function openJournalAdd() { state.jdraft = blankJournalDraft(); state.showJournalAdd = true; renderModal(); }
@@ -411,7 +472,8 @@
         navItem("trades", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="18" r="1.3" fill="currentColor" stroke="none"/></svg>', "Operaciones", state.trades.length),
         navItem("calendar", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4.5" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/></svg>', "Calendario"),
         navItem("analytics", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><line x1="4" y1="20" x2="4" y2="13"/><line x1="10" y1="20" x2="10" y2="5"/><line x1="16" y1="20" x2="16" y2="9"/><line x1="22" y1="20" x2="22" y2="15"/></svg>', "Analítica"),
-        navItem("journal", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v14H6.5A2.5 2.5 0 0 0 4 19.5z"/><line x1="4" y1="19.5" x2="4" y2="5.5"/><line x1="20" y1="17" x2="20" y2="21"/><path d="M6.5 21H20"/></svg>', "Diario")),
+        navItem("journal", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v14H6.5A2.5 2.5 0 0 0 4 19.5z"/><line x1="4" y1="19.5" x2="4" y2="5.5"/><line x1="20" y1="17" x2="20" y2="21"/><path d="M6.5 21H20"/></svg>', "Diario"),
+        navItem("accounts", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2" y="5" width="20" height="14" rx="2.5"/><line x1="2" y1="10" x2="22" y2="10"/></svg>', "Cuentas", state.accounts.length)),
       h("div", { style: "margin-top:auto;display:flex;flex-direction:column;gap:12px;" },
         h("div", { style: "border:1px solid #ECE7DD;border-radius:12px;padding:14px;background:#FBFAF7;" },
           h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, "Cuenta · Sim"),
@@ -427,7 +489,7 @@
     );
   }
 
-  var TITLES = { dashboard: "Resumen", trades: "Operaciones", calendar: "Calendario de resultados", analytics: "Analítica", journal: "Diario de trading" };
+  var TITLES = { dashboard: "Resumen", trades: "Operaciones", calendar: "Calendario de resultados", analytics: "Analítica", journal: "Diario de trading", accounts: "Cuentas" };
 
   function mainColumn() {
     return h("main", { style: "flex:1;display:flex;flex-direction:column;min-width:0;" },
@@ -462,7 +524,55 @@
       case "calendar": return calendarView();
       case "analytics": return analyticsView();
       case "journal": return journalView();
+      case "accounts": return accountsView();
     }
+  }
+
+  // ---------- cuentas ----------
+  var KIND_LABEL = { fondeo: "Fondeo", live: "Live", demo: "Demo" };
+  function kindStyle(kind) {
+    var map = { fondeo: "#EAF0F7;color:#3D6FB0", live: "#E8F3EC;color:#16915B", demo: "#F1EDE5;color:#54514A" };
+    return "display:inline-flex;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:#" + (map[kind] || "F1EDE5;color:#54514A");
+  }
+  function statusStyle(status) {
+    var map = { activa: "#E8F3EC;color:#16915B", aprobada: "#E8F3EC;color:#16915B", quemada: "#FBEAE7;color:#D6483B", pausada: "#FBF1E6;color:#C77B2A", cerrada: "#F1EDE5;color:#54514A" };
+    return "display:inline-flex;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:#" + (map[status] || "F1EDE5;color:#54514A");
+  }
+  function accountsView() {
+    var topBar = h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;" },
+      h("div", { style: "font-size:13px;color:#A39E94;" }, state.accounts.length + (state.accounts.length === 1 ? " cuenta" : " cuentas")),
+      h("button", { style: "display:flex;align-items:center;gap:7px;background:#16181C;color:#fff;font-weight:600;font-size:13px;padding:9px 15px;border-radius:9px;", onClick: openAccountAdd },
+        icon('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'), "Nueva cuenta"));
+    if (!state.accounts.length) {
+      return h("div", { style: "max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:16px;" }, topBar,
+        emptyCard("Sin cuentas todavía", "Crea tus cuentas de fondeo (prop firms) y lives para llevar el control de cada una por separado."));
+    }
+    var cards = state.accounts.map(function (a) {
+      var st = accountStats(a.id);
+      var rows = [];
+      function row(label, value, valStyle) {
+        return h("div", { style: "display:flex;align-items:center;justify-content:space-between;font-size:12.5px;padding:3px 0;" },
+          h("span", { style: "color:#807B72;" }, label),
+          h("span", { style: "font-family:'Geist Mono',monospace;font-weight:600;" + (valStyle || "") }, value));
+      }
+      rows.push(row("Balance", "$" + Number(a.balance).toLocaleString("en-US") + " " + a.currency));
+      if (a.phase) rows.push(row("Fase", a.phase, "font-family:inherit;"));
+      if (a.profit_target !== "") rows.push(row("Objetivo", "$" + Number(a.profit_target).toLocaleString("en-US")));
+      if (a.max_drawdown !== "") rows.push(row("Drawdown máx.", "$" + Number(a.max_drawdown).toLocaleString("en-US")));
+      rows.push(row("P&L registrado", signed(st.net), pnlColor(st.net)));
+      rows.push(row("Operaciones", st.count + " · " + st.winRate + "% WR", "font-family:'Geist Mono',monospace;"));
+      return h("button", { style: "text-align:left;background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:4px;", hoverBg: "#FBFAF7", onClick: function () { openAccountEdit(a); } },
+        h("div", { style: "display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px;gap:8px;" },
+          h("div", { style: "min-width:0;" },
+            h("div", { style: "font-size:15.5px;font-weight:700;letter-spacing:-0.2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" }, a.name),
+            a.firm ? h("div", { style: "font-size:12px;color:#A39E94;margin-top:2px;" }, a.firm) : null),
+          h("div", { style: "display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex:none;" },
+            h("span", { style: kindStyle(a.kind) }, KIND_LABEL[a.kind] || a.kind),
+            h("span", { style: statusStyle(a.status) }, a.status.charAt(0).toUpperCase() + a.status.slice(1)))),
+        h("div", { style: "border-top:1px solid #F3EFE7;margin-top:4px;padding-top:8px;" }, rows));
+    });
+    return h("div", { style: "max-width:1080px;margin:0 auto;" }, topBar,
+      h("div", { style: "display:grid;grid-template-columns:repeat(3,1fr);gap:16px;" }, cards));
   }
 
   // ---------- dashboard ----------
@@ -527,6 +637,7 @@
     else if (state.fResult === "loss") ft = ft.filter(function (t) { return t.pnl < 0; });
     if (state.fSymbol !== "all") ft = ft.filter(function (t) { return t.symbol === state.fSymbol; });
     if (state.fSetup !== "all") ft = ft.filter(function (t) { return t.setup === state.fSetup; });
+    if (state.fAccount !== "all") ft = ft.filter(function (t) { return (t.account_id || "none") === state.fAccount; });
     ft.sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
     var tradeRows = ft.map(buildRow);
     var symbolOpts = Object.keys(state.trades.reduce(function (acc, t) { acc[t.symbol] = 1; return acc; }, {})).sort();
@@ -540,6 +651,12 @@
     var setupSelect = h("select", { style: "font-size:12.5px;padding:8px 11px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;", onChange: function (ev) { state.fSetup = ev.target.value; render(); } },
       h("option", { value: "all" }, "Todos los setups"), h("option", { value: "Ruptura" }, "Ruptura"), h("option", { value: "Reversión" }, "Reversión"), h("option", { value: "Pullback" }, "Pullback"));
     setupSelect.value = state.fSetup;
+    var accountSelect = null;
+    if (state.accounts.length) {
+      accountSelect = h("select", { style: "font-size:12.5px;padding:8px 11px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;", onChange: function (ev) { state.fAccount = ev.target.value; render(); } },
+        [h("option", { value: "all" }, "Todas las cuentas"), h("option", { value: "none" }, "Sin cuenta")].concat(state.accounts.map(function (a) { return h("option", { value: a.id }, a.name); })));
+      accountSelect.value = state.fAccount;
+    }
 
     var gridCols = "84px 60px 1fr 64px 92px 92px 110px 120px 96px";
     var headerCols = ["Fecha", "Lado", "Símbolo", "Cont.", "Entrada", "Salida", "Setup", "P&L", "Valor."];
@@ -562,7 +679,7 @@
     return h("div", { style: "max-width:1180px;margin:0 auto;" },
       h("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px;flex-wrap:wrap;" },
         h("div", { style: "display:flex;gap:4px;background:#F1EDE5;padding:4px;border-radius:10px;" }, fSeg("all", "Todas"), fSeg("win", "Ganadoras"), fSeg("loss", "Perdedoras")),
-        h("div", { style: "display:flex;gap:10px;align-items:center;" }, symbolSelect, setupSelect,
+        h("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;" }, symbolSelect, setupSelect, accountSelect,
           h("span", { style: "font-size:12.5px;color:#807B72;font-family:'Geist Mono',monospace;" }, ft.length + " ops · " + signed(ft.reduce(function (a, t) { return a + t.pnl; }, 0))),
           h("button", { title: "Exportar a CSV", onClick: function () { exportCSV(ft); }, style: "display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:#16181C;background:#fff;border:1px solid #E2DDD3;border-radius:9px;padding:8px 12px;", hoverBg: "#FAF8F4" },
             icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>'), "CSV"))),
@@ -724,6 +841,9 @@
           h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;" },
             h("div", null, h("div", { style: "font-size:11px;color:#807B72;margin-bottom:5px;" }, "Emoción"), h("span", { style: emoStyleOf(st.emotion) }, st.emotion)),
             h("div", { style: "text-align:right;" }, h("div", { style: "font-size:11px;color:#807B72;margin-bottom:5px;" }, "Valoración"), h("span", { style: "color:#D8B23E;letter-spacing:2px;font-size:15px;" }, stars(st.rating)))),
+          accountName(st.account_id) ? h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding:11px 13px;border:1px solid #ECE7DD;border-radius:11px;background:#FBFAF7;" },
+            h("span", { style: "font-size:11px;color:#807B72;" }, "Cuenta"),
+            h("span", { style: "font-size:13px;font-weight:600;" }, accountName(st.account_id))) : null,
           h("div", { style: "margin-bottom:8px;font-size:11px;color:#807B72;" }, "Notas"),
           h("div", { style: "background:#FBFAF7;border:1px solid #ECE7DD;border-radius:11px;padding:15px;font-size:13.5px;line-height:1.6;color:#33312C;" }, note)),
         h("div", { style: "padding:16px 22px;border-top:1px solid #ECE7DD;display:flex;gap:10px;" },
@@ -741,6 +861,7 @@
     if (!state.user) return;
     if (state.showAdd) root.appendChild(addModal());
     else if (state.showJournalAdd) root.appendChild(journalModal());
+    else if (state.showAccountAdd) root.appendChild(accountModal());
   }
 
   function draftPnl() {
@@ -809,6 +930,7 @@
         field("Setup", fieldSelect(d, "setup", [["Ruptura", "Ruptura"], ["Reversión", "Reversión"], ["Pullback", "Pullback"]])),
         field("Emoción", fieldSelect(d, "emotion", [["Tranquilo", "Tranquilo"], ["Confiado", "Confiado"], ["Ansioso", "Ansioso"], ["FOMO", "FOMO"]])),
         field("Valoración", fieldSelect(d, "rating", [["1", "★"], ["2", "★★"], ["3", "★★★"], ["4", "★★★★"], ["5", "★★★★★"]]))),
+      field("Cuenta", fieldSelect(d, "account_id", [["", "Sin cuenta"]].concat(state.accounts.map(function (a) { return [a.id, a.name + " · " + (KIND_LABEL[a.kind] || a.kind)]; })))),
       field("Notas", note),
       h("div", { style: "display:flex;align-items:center;justify-content:space-between;background:#FBFAF7;border:1px solid #ECE7DD;border-radius:11px;padding:13px 16px;" },
         h("span", { style: "font-size:12.5px;color:#807B72;" }, "P&L estimado"), previewSpan),
@@ -851,6 +973,44 @@
     return frame;
   }
 
+  function accountModal() {
+    var editing = state.accountEditId != null;
+    var d = state.accountDraft;
+    var base = "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;";
+    var mono = base + "font-family:'Geist Mono',monospace;";
+    var saveBtn = h("button", { onClick: saveAccount }, editing ? "Guardar cambios" : "Crear cuenta");
+    function refresh() {
+      var valid = d.name.trim().length > 0;
+      saveBtn.style.cssText = "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (valid ? "background:#16181C;color:#fff;" : "background:#CFC9BD;color:#fff;cursor:not-allowed;");
+    }
+    var notesTa = h("textarea", { rows: "2", placeholder: "Reglas, notas…", style: base + "line-height:1.5;resize:vertical;", onInput: function (e) { d.notes = e.target.value; } });
+    notesTa.value = d.notes;
+    var body = [
+      field("Nombre de la cuenta", fieldInput(d, "name", { placeholder: "Apex 50K #1, IBKR Live…", style: base, onInput: function (e) { d.name = e.target.value; refresh(); } })),
+      h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
+        field("Tipo", fieldSelect(d, "kind", [["fondeo", "Fondeo (prop firm)"], ["live", "Live"], ["demo", "Demo"]])),
+        field("Firma / bróker", fieldInput(d, "firm", { placeholder: "Apex, Topstep, IBKR…", style: base }))),
+      h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
+        field("Balance", fieldInput(d, "balance", { type: "number", step: "0.01", placeholder: "0.00", style: mono })),
+        field("Moneda", fieldSelect(d, "currency", [["USD", "USD"], ["EUR", "EUR"], ["GBP", "GBP"], ["MXN", "MXN"]]))),
+      h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
+        field("Estado", fieldSelect(d, "status", [["activa", "Activa"], ["aprobada", "Aprobada"], ["quemada", "Quemada"], ["pausada", "Pausada"], ["cerrada", "Cerrada"]])),
+        field("Fase", fieldInput(d, "phase", { placeholder: "Evaluación, Fase 1, Fondeada…", style: base }))),
+      h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
+        field("Objetivo de beneficio", fieldInput(d, "profit_target", { type: "number", step: "0.01", placeholder: "opcional", style: mono })),
+        field("Drawdown máx.", fieldInput(d, "max_drawdown", { type: "number", step: "0.01", placeholder: "opcional", style: mono }))),
+      field("Notas", notesTa),
+    ];
+    var footer = [
+      h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #E2DDD3;background:#fff;font-weight:600;font-size:13.5px;", hoverBg: "#FAF8F4", onClick: closeAccountAdd }, "Cancelar"),
+    ];
+    if (editing) footer.push(h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #F2D9D5;background:#FCF1EF;color:#D6483B;font-weight:600;font-size:13.5px;", hoverBg: "#FBEAE7", onClick: deleteAccount }, "Eliminar"));
+    footer.push(saveBtn);
+    var frame = modalFrame(editing ? "Editar cuenta" : "Nueva cuenta", closeAccountAdd, body, footer, 560);
+    refresh();
+    return frame;
+  }
+
   // ===================================================================
   // Boot
   // ===================================================================
@@ -865,7 +1025,7 @@
     if (event === "INITIAL_SESSION") return; // handled by getSession below
     state.user = session ? session.user : null;
     if (event === "SIGNED_IN") { state.authBusy = false; state.authEmail = ""; state.authPass = ""; loadData(); }
-    else if (event === "SIGNED_OUT") { state.trades = []; state.journal = []; state.view = "dashboard"; state.selectedId = null; render(); }
+    else if (event === "SIGNED_OUT") { state.trades = []; state.journal = []; state.accounts = []; state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; render(); }
   });
   SB.auth.getSession().then(function (res) {
     state.user = res.data.session ? res.data.session.user : null;
