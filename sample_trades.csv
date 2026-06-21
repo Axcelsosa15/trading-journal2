@@ -1,0 +1,11 @@
+symbol,side,quantity,entry_price,exit_price,entry_time,exit_time,fees,commission,market_type,notes
+AAPL,buy,100,175.50,180.25,2026-05-10 09:31:00,2026-05-10 14:15:00,1.00,1.00,stocks,Breakout above resistance
+TSLA,sell,50,265.00,259.50,2026-05-11 10:00:00,2026-05-11 11:30:00,0.50,0.50,stocks,Short on rejection at MA
+BTCUSDT,buy,0.05,67000,68500,2026-05-12 14:00:00,2026-05-13 18:00:00,5,0,crypto,Swing long BTC
+EURUSD,buy,10000,1.0850,1.0820,2026-05-13 08:00:00,2026-05-13 12:00:00,0,2,forex,Stopped out on news
+NVDA,buy,30,920,945,2026-05-14 09:35:00,2026-05-14 10:45:00,1,1,stocks,Earnings momentum play
+SPY,sell,20,520,518,2026-05-15 09:30:00,2026-05-15 09:55:00,0.5,0.5,stocks,Quick scalp on gap fade
+MSFT,buy,40,420,430,2026-05-16 10:00:00,2026-05-16 15:30:00,1,1,stocks,Hold to close
+GOOGL,buy,15,180,175,2026-05-17 09:45:00,2026-05-17 14:00:00,1,1,stocks,Cut loss at SL
+ETHUSDT,sell,0.5,3800,3700,2026-05-18 12:00:00,2026-05-19 04:00:00,3,0,crypto,Short ETH bounce
+GBPUSD,sell,5000,1.275,1.272,2026-05-20 09:00:00,2026-05-20 11:00:00,0,1,forex,Sold rally

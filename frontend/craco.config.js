@@ -61,22 +61,38 @@ let webpackConfig = {
 };
 
 webpackConfig.devServer = (devServerConfig) => {
-  // Add health check endpoints if enabled
-  if (config.enableHealthCheck && setupHealthEndpoints && healthPluginInstance) {
-    const originalSetupMiddlewares = devServerConfig.setupMiddlewares;
-
-    devServerConfig.setupMiddlewares = (middlewares, devServer) => {
-      // Call original setup if exists
-      if (originalSetupMiddlewares) {
-        middlewares = originalSetupMiddlewares(middlewares, devServer);
-      }
-
-      // Setup health endpoints
-      setupHealthEndpoints(devServer, healthPluginInstance);
-
-      return middlewares;
-    };
+  // Strip deprecated webpack-dev-server v4 keys that react-scripts 5 still injects.
+  // webpack-dev-server v5 schema does not allow these and would throw.
+  const originalBefore = devServerConfig.onBeforeSetupMiddleware;
+  const originalAfter = devServerConfig.onAfterSetupMiddleware;
+  const httpsCfg = devServerConfig.https;
+  delete devServerConfig.onBeforeSetupMiddleware;
+  delete devServerConfig.onAfterSetupMiddleware;
+  delete devServerConfig.https;
+  // Migrate https to server.type
+  if (httpsCfg) {
+    devServerConfig.server = { type: 'https', options: typeof httpsCfg === 'object' ? httpsCfg : undefined };
   }
+
+  const originalSetupMiddlewares = devServerConfig.setupMiddlewares;
+  devServerConfig.setupMiddlewares = (middlewares, devServer) => {
+    if (typeof originalBefore === 'function') {
+      try { originalBefore(devServer); } catch (e) { /* noop */ }
+    }
+    let mws = middlewares;
+    if (originalSetupMiddlewares) {
+      mws = originalSetupMiddlewares(mws, devServer);
+    }
+    if (typeof originalAfter === 'function') {
+      try { originalAfter(devServer); } catch (e) { /* noop */ }
+    }
+    if (config.enableHealthCheck && setupHealthEndpoints && healthPluginInstance) {
+      setupHealthEndpoints(devServer, healthPluginInstance);
+    }
+    return mws;
+  };
+
+  devServerConfig.allowedHosts = 'all';
 
   return devServerConfig;
 };
