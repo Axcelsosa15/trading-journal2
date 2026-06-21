@@ -89,7 +89,7 @@ export default function ImportPage() {
               <div className="mt-4 p-3 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 text-xs">
                 <div className="flex items-center gap-2 font-medium mb-1"><AlertCircle className="w-4 h-4" /> {preview.errors.length} errors</div>
                 <ul className="list-disc list-inside">
-                  {preview.errors.slice(0, 5).map((e, i) => <li key={i}>Row {e.row}: {e.error}</li>)}
+                  {preview.errors.slice(0, 5).map((e) => <li key={`err-${e.row}`}>Row {e.row}: {e.error}</li>)}
                 </ul>
               </div>
             )}
@@ -112,8 +112,8 @@ export default function ImportPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {preview.preview.map((t, i) => (
-                      <tr key={i} className="border-b border-border/40">
+                    {preview.preview.map((t) => (
+                      <tr key={t.id || `${t.symbol}-${t.entry_time}-${t.quantity}`} className="border-b border-border/40">
                         <td className="py-2.5 px-4 font-mono font-semibold">{t.symbol}</td>
                         <td className="py-2.5 px-2 capitalize text-xs text-muted-foreground">{t.market_type}</td>
                         <td className="py-2.5 px-2 capitalize text-xs">{t.side}</td>

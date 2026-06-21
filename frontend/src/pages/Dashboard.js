@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { KpiCard } from '@/components/common/KpiCard';
@@ -21,34 +21,45 @@ export default function DashboardPage() {
   const [bySession, setBySession] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [s, e, c, t, bs, bss] = await Promise.all([
-          api.get('/analytics/summary'),
-          api.get('/analytics/equity'),
-          api.get('/analytics/calendar'),
-          api.get('/trades', { params: { limit: 8 } }),
-          api.get('/analytics/breakdown', { params: { by: 'symbol' } }),
-          api.get('/analytics/breakdown', { params: { by: 'session' } }),
-        ]);
-        setSummary(s.data);
-        setEquity(e.data);
-        setCalendar(c.data);
-        setRecent(t.data);
-        setBySymbol(bs.data);
-        setBySession(bss.data);
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+  const loadDashboard = useCallback(async () => {
+    try {
+      const [s, e, c, t, bs, bss] = await Promise.all([
+        api.get('/analytics/summary'),
+        api.get('/analytics/equity'),
+        api.get('/analytics/calendar'),
+        api.get('/trades', { params: { limit: 8 } }),
+        api.get('/analytics/breakdown', { params: { by: 'symbol' } }),
+        api.get('/analytics/breakdown', { params: { by: 'session' } }),
+      ]);
+      setSummary(s.data);
+      setEquity(e.data);
+      setCalendar(c.data);
+      setRecent(t.data);
+      setBySymbol(bs.data);
+      setBySession(bss.data);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => { loadDashboard(); }, [loadDashboard]);
+
+  // Stable chart configuration objects (avoid new refs on every render)
+  const chartMargin = useMemo(() => ({ top: 10, right: 8, bottom: 0, left: 0 }), []);
+  const barMargin = useMemo(() => ({ top: 5, right: 5, left: 5, bottom: 5 }), []);
+  const tooltipStyle = useMemo(() => ({
+    backgroundColor: 'hsl(var(--card))',
+    border: '1px solid hsl(var(--border))',
+    borderRadius: 12,
+    fontSize: 12,
+  }), []);
+  const axisStyleSmall = useMemo(() => ({ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }), []);
+  const axisStyleMono = useMemo(() => ({ fontSize: 10, fill: 'hsl(var(--muted-foreground))', fontFamily: 'JetBrains Mono' }), []);
 
   if (loading) {
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[0,1,2,3].map(i => <div key={i} className="glass-card p-5 h-28 animate-pulse" />)}
+        {['a','b','c','d'].map(k => <div key={`sk-${k}`} className="glass-card p-5 h-28 animate-pulse" />)}
       </div>
     );
   }
@@ -97,7 +108,7 @@ export default function DashboardPage() {
           ) : (
             <div className="h-64" data-testid="equity-chart">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={equity} margin={{ top: 10, right: 8, bottom: 0, left: 0 }}>
+                <AreaChart data={equity} margin={chartMargin}>
                   <defs>
                     <linearGradient id="equityGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.35} />
@@ -105,10 +116,10 @@ export default function DashboardPage() {
                     </linearGradient>
                   </defs>
                   <CartesianGrid stroke="hsl(var(--border)/0.5)" strokeDasharray="3 6" vertical={false} />
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} tickFormatter={(v) => fmtDate(v)} stroke="hsl(var(--border))" />
-                  <YAxis tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} stroke="hsl(var(--border))" tickFormatter={(v) => `$${v}`} />
+                  <XAxis dataKey="date" tick={axisStyleSmall} tickFormatter={(v) => fmtDate(v)} stroke="hsl(var(--border))" />
+                  <YAxis tick={axisStyleSmall} stroke="hsl(var(--border))" tickFormatter={(v) => `$${v}`} />
                   <Tooltip
-                    contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 12, fontSize: 12 }}
+                    contentStyle={tooltipStyle}
                     formatter={(value, name) => [fmtCurrency(value), name]}
                     labelFormatter={(l) => fmtDateTime(l)}
                   />
@@ -143,17 +154,17 @@ export default function DashboardPage() {
           ) : (
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topContracts} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
+                <BarChart data={topContracts} margin={barMargin}>
                   <CartesianGrid stroke="hsl(var(--border)/0.5)" strokeDasharray="3 6" vertical={false} />
-                  <XAxis dataKey="key" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))', fontFamily: 'JetBrains Mono' }} stroke="hsl(var(--border))" />
-                  <YAxis tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} stroke="hsl(var(--border))" tickFormatter={(v) => `$${v}`} />
+                  <XAxis dataKey="key" tick={axisStyleMono} stroke="hsl(var(--border))" />
+                  <YAxis tick={axisStyleSmall} stroke="hsl(var(--border))" tickFormatter={(v) => `$${v}`} />
                   <Tooltip
-                    contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 12, fontSize: 12 }}
+                    contentStyle={tooltipStyle}
                     formatter={(value, name, props) => [fmtCurrency(value), `P&L (${props.payload.trades} trades)`]}
                   />
                   <Bar dataKey="pnl" radius={[6, 6, 0, 0]}>
-                    {topContracts.map((d, i) => (
-                      <Cell key={i} fill={d.pnl >= 0 ? 'hsl(152 55% 42%)' : 'hsl(0 72% 55%)'} />
+                    {topContracts.map((d) => (
+                      <Cell key={d.key} fill={d.pnl >= 0 ? 'hsl(152 55% 42%)' : 'hsl(0 72% 55%)'} />
                     ))}
                   </Bar>
                 </BarChart>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { Input } from '@/components/ui/input';
@@ -21,7 +21,7 @@ export default function TradesPage() {
   const [strategy, setStrategy] = useState('all');
   const [result, setResult] = useState('all');
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const params = {};
@@ -35,9 +35,9 @@ export default function TradesPage() {
       setTrades(r.data);
       setStrategies(s.data);
     } finally { setLoading(false); }
-  };
+  }, [market, status, strategy]);
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [market, status, strategy]);
+  useEffect(() => { load(); }, [load]);
 
   const filtered = useMemo(() => {
     let list = trades;

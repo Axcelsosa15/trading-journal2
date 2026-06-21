@@ -32,7 +32,11 @@ export default function NewTradePage() {
     attachments: [],
   });
 
-  useEffect(() => { api.get('/strategies').then(r => setStrategies(r.data)); }, []);
+  useEffect(() => {
+    let mounted = true;
+    api.get('/strategies').then(r => { if (mounted) setStrategies(r.data); });
+    return () => { mounted = false; };
+  }, []);
 
   const upd = (k, v) => setForm(s => ({ ...s, [k]: v }));
 

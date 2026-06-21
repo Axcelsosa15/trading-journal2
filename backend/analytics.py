@@ -7,12 +7,13 @@ from utils import parse_dt
 
 
 def compute_metrics(trades: List[dict]) -> Dict[str, Any]:
-    closed = [t for t in trades if t.get("status") == "closed" and t.get("exit_price") is not None]
+    closed = [tr for tr in trades if tr.get("status") == "closed" and tr.get("exit_price") is not None]
+    open_count = len([tr for tr in trades if tr.get("status") == "open"])
     if not closed:
         return {
             "total_trades": len(trades),
             "closed_trades": 0,
-            "open_trades": len([t for t in trades if t.get("status") == "open"]),
+            "open_trades": open_count,
             "net_pnl": 0.0,
             "gross_profit": 0.0,
             "gross_loss": 0.0,
@@ -31,7 +32,7 @@ def compute_metrics(trades: List[dict]) -> Dict[str, Any]:
             "break_evens": 0,
         }
 
-    pnls = [float(t.get("pnl") or 0) for t in closed]
+    pnls = [float(tr.get("pnl") or 0) for tr in closed]
     wins = [p for p in pnls if p > 0]
     losses = [p for p in pnls if p < 0]
     break_evens = [p for p in pnls if p == 0]
@@ -47,19 +48,22 @@ def compute_metrics(trades: List[dict]) -> Dict[str, Any]:
     expectancy = (net_pnl / len(pnls)) if pnls else 0
 
     # Drawdown
-    sorted_closed = sorted(closed, key=lambda t: parse_dt(t.get("exit_time")) or parse_dt(t.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc))
-    equity = 0
-    peak = 0
-    max_dd = 0
-    for t in sorted_closed:
-        equity += float(t.get("pnl") or 0)
+    sorted_closed = sorted(
+        closed,
+        key=lambda tr: parse_dt(tr.get("exit_time")) or parse_dt(tr.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc),
+    )
+    equity = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    for tr in sorted_closed:
+        equity += float(tr.get("pnl") or 0)
         if equity > peak:
             peak = equity
         dd = equity - peak
         if dd < max_dd:
             max_dd = dd
 
-    # Sharpe (simple, daily)
+    # Sharpe (simple)
     import statistics
     sharpe = 0.0
     if len(pnls) > 1:
@@ -69,13 +73,13 @@ def compute_metrics(trades: List[dict]) -> Dict[str, Any]:
             sharpe = mean / stdev
 
     # avg R
-    rs = [float(t.get("r_multiple")) for t in closed if t.get("r_multiple") is not None]
+    rs = [float(tr.get("r_multiple")) for tr in closed if tr.get("r_multiple") is not None]
     avg_r = (sum(rs) / len(rs)) if rs else 0
 
     return {
         "total_trades": len(trades),
         "closed_trades": len(closed),
-        "open_trades": len([t for t in trades if t.get("status") == "open"]),
+        "open_trades": open_count,
         "net_pnl": round(net_pnl, 2),
         "gross_profit": round(gross_profit, 2),
         "gross_loss": round(gross_loss, 2),

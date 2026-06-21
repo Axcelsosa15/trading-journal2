@@ -1,11 +1,11 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { api } from '@/lib/api';
+import { api, tokenStore } from '@/lib/api';
 
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(() => localStorage.getItem('tj_token'));
+  const [token, setToken] = useState(() => tokenStore.get());
   const [loading, setLoading] = useState(true);
 
   const fetchMe = useCallback(async () => {
@@ -13,8 +13,8 @@ export const AuthProvider = ({ children }) => {
     try {
       const r = await api.get('/auth/me');
       setUser(r.data);
-    } catch (e) {
-      localStorage.removeItem('tj_token');
+    } catch {
+      tokenStore.clear();
       setToken(null);
       setUser(null);
     } finally {
@@ -26,7 +26,7 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     const r = await api.post('/auth/login', { email, password });
-    localStorage.setItem('tj_token', r.data.access_token);
+    tokenStore.set(r.data.access_token);
     setToken(r.data.access_token);
     setUser(r.data.user);
     return r.data.user;
@@ -34,14 +34,14 @@ export const AuthProvider = ({ children }) => {
 
   const register = async (email, password, name) => {
     const r = await api.post('/auth/register', { email, password, name });
-    localStorage.setItem('tj_token', r.data.access_token);
+    tokenStore.set(r.data.access_token);
     setToken(r.data.access_token);
     setUser(r.data.user);
     return r.data.user;
   };
 
   const logout = () => {
-    localStorage.removeItem('tj_token');
+    tokenStore.clear();
     setToken(null);
     setUser(null);
   };

@@ -51,8 +51,9 @@ export default function CalendarHeatmap({ data = [], days = 120 }) {
           {cols.map((wk, i) => {
             const first = wk.find(c => c);
             const showLabel = first && first.day.getDate() <= 7;
+            const colKey = first ? `m-${first.date}` : `m-empty-${i}`;
             return (
-              <div key={i} className="w-3 text-[9px] text-muted-foreground text-center">
+              <div key={colKey} className="w-3 text-[9px] text-muted-foreground text-center">
                 {showLabel ? monthLabel(first.day) : ''}
               </div>
             );
@@ -66,10 +67,13 @@ export default function CalendarHeatmap({ data = [], days = 120 }) {
               <div key={d} className="h-3 leading-3">{i % 2 === 1 ? d : ''}</div>
             ))}
           </div>
-          {cols.map((wk, i) => (
-            <div key={i} className="flex flex-col gap-1">
+          {cols.map((wk, i) => {
+            const first = wk.find(c => c);
+            const wkKey = first ? `wk-${first.date}` : `wk-empty-${i}`;
+            return (
+            <div key={wkKey} className="flex flex-col gap-1">
               {wk.map((c, j) => {
-                if (!c) return <div key={j} className="w-3 h-3" />;
+                if (!c) return <div key={`pad-${wkKey}-${j}`} className="w-3 h-3" />;
                 const e = c.entry;
                 let bg = 'hsl(var(--muted)/0.5)';
                 if (e) {
@@ -78,7 +82,7 @@ export default function CalendarHeatmap({ data = [], days = 120 }) {
                   bg = color;
                 }
                 return (
-                  <Tooltip key={j}>
+                  <Tooltip key={c.date}>
                     <TooltipTrigger asChild>
                       <div
                         className={cn('w-3 h-3 rounded-[3px] cursor-pointer border border-border/30')}
@@ -99,13 +103,13 @@ export default function CalendarHeatmap({ data = [], days = 120 }) {
                 );
               })}
             </div>
-          ))}
+          );})}
         </div>
 
         <div className="flex items-center justify-end gap-2 mt-2 text-[10px] text-muted-foreground">
           <span>Less</span>
-          {[0.10, 0.18, 0.28, 0.40, 0.55].map((a, i) => (
-            <div key={i} className="w-3 h-3 rounded-[3px]" style={{ backgroundColor: `hsl(152 55% 38% / ${a})` }} />
+          {[0.10, 0.18, 0.28, 0.40, 0.55].map((a) => (
+            <div key={`lgd-${a}`} className="w-3 h-3 rounded-[3px]" style={{ backgroundColor: `hsl(152 55% 38% / ${a})` }} />
           ))}
           <span>More</span>
         </div>

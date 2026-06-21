@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -24,12 +24,12 @@ export default function InsightsPage() {
   const [running, setRunning] = useState(false);
   const [custom, setCustom] = useState('');
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const r = await api.get('/ai/insights');
     setInsights(r.data);
-    if (r.data.length && !selected) setSelected(r.data[0]);
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+    setSelected(prev => prev || (r.data.length ? r.data[0] : null));
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   const run = async (preset, customPrompt) => {
     setRunning(true);
@@ -141,7 +141,7 @@ export default function InsightsPage() {
                 <div>
                   <h3 className="font-display font-semibold text-sm mb-2 flex items-center gap-2"><Zap className="w-4 h-4 text-accent" /> Next Actions</h3>
                   <ol className="space-y-1.5 list-decimal list-inside text-sm text-muted-foreground">
-                    {r.next_actions.map((a, i) => <li key={i} className="leading-relaxed">{a}</li>)}
+                    {r.next_actions.map((a) => <li key={`na-${a.slice(0,50)}`} className="leading-relaxed">{a}</li>)}
                   </ol>
                 </div>
               )}
@@ -173,7 +173,7 @@ const Block = ({ title, items, accent = 'blue', icon: Icon }) => {
         {Icon && <Icon className="w-4 h-4" />} {title}
       </h3>
       <ul className="space-y-1.5 list-disc list-inside text-sm text-foreground/80">
-        {items.map((s, i) => <li key={i} className="leading-relaxed">{s}</li>)}
+        {items.map((s) => <li key={`it-${s.slice(0,50)}`} className="leading-relaxed">{s}</li>)}
       </ul>
     </div>
   );
