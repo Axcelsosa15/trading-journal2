@@ -1,0 +1,126 @@
+{
+  "summary": "Completed comprehensive E2E testing of Trading Journal application. Backend: 95.1% success rate (39/41 tests passed). Frontend: 100% core functionality working. All major features tested including auth, trades CRUD, analytics, broker connections, CSV import, and UI navigation.",
+  "backend_issues": {
+    "critical_bugs": [
+      {
+        "endpoint": "POST /api/ai/insights",
+        "issue": "Returns 500 Internal Server Error - TypeError: can't compare offset-naive and offset-aware datetimes",
+        "impact": "AI insights feature completely broken - users cannot generate Claude AI analysis of their trades",
+        "fix_priority": "CRITICAL",
+        "error_details": "Datetime comparison issue in analytics.py or ai_service.py when sorting trades. Line 50 in analytics.py uses datetime.min.replace(tzinfo=timezone.utc) which may be causing the comparison error.",
+        "reproduction": "1. Create at least 1 trade, 2. Call POST /api/ai/insights with prompt_preset='general', 3. Observe 500 error"
+      }
+    ],
+    "minor_bugs": [
+      {
+        "endpoint": "POST /api/brokers/connections/{id}/sync",
+        "issue": "Returns 200 with 0 imports instead of 400 when syncing with invalid credentials",
+        "impact": "Minor - graceful handling but incorrect status code. Expected 400 error for invalid credentials but got 200 success.",
+        "fix_priority": "LOW",
+        "current_behavior": "Returns {\"imported\": 0, \"fetched\": 0, \"last_sync\": \"...\", \"last_status\": \"error\"} with 200 status",
+        "expected_behavior": "Should return 400 status code with error details when credentials are invalid"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Dialog/Modal Overlay",
+        "issue": "Dialog overlay can block navigation clicks when dialog is open",
+        "selector": "DialogOverlay with z-50",
+        "fix_priority": "LOW",
+        "impact": "User must close dialog or retry click to navigate. Observed when broker connection dialog was open and trying to click settings link.",
+        "workaround": "Close dialog first or retry click"
+      }
+    ],
+    "integration_issues": []
+  },
+  "passed_tests": [
+    "✅ Backend: POST /api/auth/register - Creates user and returns JWT + user object",
+    "✅ Backend: POST /api/auth/login - Login with demo@trading.com works",
+    "✅ Backend: GET /api/auth/me - Returns current user with valid JWT",
+    "✅ Backend: Auth enforcement - 401 for missing/invalid tokens",
+    "✅ Backend: POST /api/trades - Creates trade with all fields (symbol, market, side, qty, prices, fees, emotion, notes, etc.)",
+    "✅ Backend: P&L computation - Automatically computes P&L, P&L%, and R-multiple",
+    "✅ Backend: GET /api/trades - Lists trades with filters (symbol, market_type, status)",
+    "✅ Backend: GET /api/trades/{id} - Gets single trade",
+    "✅ Backend: PATCH /api/trades/{id} - Updates trade and recomputes P&L",
+    "✅ Backend: DELETE /api/trades/{id} - Deletes trade",
+    "✅ Backend: POST /api/strategies - Creates strategy",
+    "✅ Backend: GET /api/strategies - Lists strategies",
+    "✅ Backend: DELETE /api/strategies/{id} - Deletes strategy",
+    "✅ Backend: POST /api/tags - Creates tag",
+    "✅ Backend: GET /api/tags - Lists tags",
+    "✅ Backend: GET /api/analytics/summary - Returns all metrics (net_pnl, win_rate, profit_factor, expectancy, max_drawdown, avg_win/loss, best/worst trade, sharpe_ratio, avg_r)",
+    "✅ Backend: GET /api/analytics/equity - Returns equity curve points",
+    "✅ Backend: GET /api/analytics/calendar - Returns daily P&L aggregation",
+    "✅ Backend: GET /api/analytics/breakdown?by=symbol - Breakdown by symbol",
+    "✅ Backend: GET /api/analytics/breakdown?by=strategy_id - Breakdown by strategy",
+    "✅ Backend: GET /api/analytics/breakdown?by=day_of_week - Breakdown by day of week",
+    "✅ Backend: GET /api/analytics/breakdown?by=emotion - Breakdown by emotion",
+    "✅ Backend: POST /api/brokers/connections - Creates Binance connection",
+    "✅ Backend: POST /api/brokers/connections - Creates Alpaca connection",
+    "✅ Backend: POST /api/brokers/connections - Creates OANDA connection",
+    "✅ Backend: GET /api/brokers/connections - Lists connections without exposing secrets",
+    "✅ Backend: DELETE /api/brokers/connections/{id} - Deletes connection",
+    "✅ Backend: POST /api/import/csv/preview - Previews CSV with 10 trades parsed",
+    "✅ Backend: POST /api/import/csv - Imports 10 trades from sample CSV",
+    "✅ Backend: GET /api/ai/insights - Lists AI insights",
+    "✅ Backend: User data isolation - Second user cannot see first user's trades",
+    "✅ Frontend: Login page loads with demo credentials pre-filled",
+    "✅ Frontend: Login works and redirects to dashboard",
+    "✅ Frontend: Dashboard shows all KPI cards (Net P&L, Win Rate, Profit Factor, Max Drawdown, Avg Win, Avg Loss, Best Trade, Worst Trade)",
+    "✅ Frontend: Dashboard shows equity curve chart (when data exists)",
+    "✅ Frontend: Dashboard shows P&L calendar heatmap",
+    "✅ Frontend: Dashboard shows recent trades table",
+    "✅ Frontend: Navigation works to all pages (Trades, Strategies, Brokers, Import, Insights, Settings)",
+    "✅ Frontend: New Trade form - can fill all fields (symbol, market, side, qty, prices, fees, dates, emotion, notes)",
+    "✅ Frontend: New Trade form - Save Trade creates trade and navigates to /trades",
+    "✅ Frontend: Trades page shows trades list with all columns",
+    "✅ Frontend: Trades page filters work (search, market, status, result)",
+    "✅ Frontend: Strategies page allows creating strategies",
+    "✅ Frontend: Brokers page shows 3 broker cards (Binance, Alpaca, OANDA)",
+    "✅ Frontend: Brokers page - Connect button opens dialog with API key/secret fields",
+    "✅ Frontend: Import page shows CSV upload area with supported columns",
+    "✅ Frontend: Insights page shows preset buttons (General, Mistakes, Best Setups, Risk, Weekly Recap) and custom prompt input",
+    "✅ Frontend: Settings page shows profile, theme toggle, and logout button",
+    "✅ Frontend: Theme toggle works (switches between dark/light mode)",
+    "✅ Frontend: Logout button clears token and redirects to /login"
+  ],
+  "test_report_links": [
+    "/app/backend_test.py",
+    ".screenshots/01_login_page.png",
+    ".screenshots/02_dashboard.png",
+    ".screenshots/03_trades_page.png",
+    ".screenshots/04_strategies_page.png",
+    ".screenshots/05_brokers_page.png",
+    ".screenshots/06_import_page.png",
+    ".screenshots/07_insights_page.png",
+    ".screenshots/08_settings_page.png",
+    ".screenshots/13_new_trade_filled.png",
+    ".screenshots/14_trades_with_new_trade.png",
+    ".screenshots/15_import_page.png",
+    ".screenshots/16_broker_connect_dialog.png",
+    ".screenshots/19_settings_final.png",
+    ".screenshots/20_logout_success.png"
+  ],
+  "action_item_for_main_agent": {
+    "critical": [
+      "Fix AI insights 500 error - datetime comparison issue in analytics.py line 50 or ai_service.py. The error 'TypeError: can't compare offset-naive and offset-aware datetimes' occurs when generating insights. Likely caused by comparing datetime.min.replace(tzinfo=timezone.utc) with other datetime objects. Ensure all datetime objects have consistent timezone awareness."
+    ],
+    "optional": [
+      "Update broker sync endpoint to return 400 status code instead of 200 when credentials are invalid (currently returns 200 with 0 imports and last_status='error')",
+      "Fix dialog overlay z-index issue that can block navigation clicks when dialogs are open"
+    ]
+  },
+  "updated_files": [
+    "/app/backend_test.py"
+  ],
+  "success_percentage": {
+    "backend": "95.1% (39/41 tests passed)",
+    "frontend": "100% (all core features working)",
+    "overall": "97.6%"
+  },
+  "should_call_test_agent_after_fix": "true",
+  "should_main_agent_test_itself": "false"
+}

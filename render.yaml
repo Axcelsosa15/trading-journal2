@@ -1,0 +1,31 @@
+# Render Blueprint for the Trading Journal backend (FastAPI).
+# Deploy: push to GitHub, then in Render -> "New +" -> "Blueprint" and pick this repo.
+# The database (MongoDB) is NOT hosted here — use MongoDB Atlas free tier and paste
+# its connection string into MONGO_URL below (set as a secret in the Render dashboard).
+services:
+  - type: web
+    name: trading-journal-api
+    runtime: docker
+    plan: free
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/
+    envVars:
+      - key: MONGO_URL
+        sync: false # set in dashboard (MongoDB Atlas connection string)
+      - key: DB_NAME
+        value: trading_journal
+      - key: JWT_SECRET
+        generateValue: true # Render generates a strong random value
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXP_MINUTES
+        value: "10080"
+      - key: ENCRYPTION_KEY
+        sync: false # set in dashboard: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      - key: ANTHROPIC_API_KEY
+        sync: false # set in dashboard (https://console.anthropic.com)
+      - key: AI_MODEL
+        value: claude-sonnet-4-6
+      - key: CORS_ORIGINS
+        sync: false # set in dashboard to your frontend URL, e.g. https://your-app.vercel.app

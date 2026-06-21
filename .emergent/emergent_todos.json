@@ -1,0 +1,26 @@
+[
+  {
+    "content": "Phase 3: Pivot to FUTURES focus - models (point_value, tick_size, session, contract specs)",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 3: P&L calc with point_value for futures, default market=futures",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 3: UI - Contract presets (ES, NQ, CL, GC, MES, MNQ...), Session selector, futures-first labels",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 3: Dashboard - Best Contract, By Session breakdown, futures-specific KPIs",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 3: AI Insights - Futures-specialized coaching prompts (incl. Sessions preset)",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 3: Sample CSV (futures), End-to-end verified working",
+    "status": "completed"
+  }
+]

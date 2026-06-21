@@ -1,0 +1,4 @@
+/* Trading Journal - global app styles (no centering, no light/dark text mismatches) */
+.App {
+    min-height: 100vh;
+}
