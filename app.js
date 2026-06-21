@@ -61,7 +61,7 @@
     view: "dashboard",
     trades: [], journal: [], accounts: [],
     selectedId: null,
-    fResult: "all", fSymbol: "all", fSetup: "all", fAccount: "all",
+    fResult: "all", fSymbol: "all", fSetup: "all", fAccount: "all", fTag: "all",
     calMonth: thisMonth(),
     showAdd: false, editId: null, draft: blankDraft(),
     showJournalAdd: false, jdraft: blankJournalDraft(),
@@ -91,7 +91,7 @@
     return Math.round((Number(t.exit) - Number(t.entry)) * PV(t) * Number(t.contracts) * dir);
   }
   function blankDraft() {
-    return { symbol: "MES", type: "future", side: "long", contracts: 1, entry: "", exit: "", date: todayISO(), setup: "Ruptura", emotion: "Tranquilo", rating: 3, note: "", account_id: "" };
+    return { symbol: "MES", type: "future", side: "long", contracts: 1, entry: "", exit: "", date: todayISO(), setup: "Ruptura", emotion: "Tranquilo", rating: 3, note: "", account_id: "", tags: "", mae: "", mfe: "" };
   }
   function blankAccountDraft() {
     return { name: "", kind: "fondeo", firm: "", balance: "", currency: "USD", phase: "", status: "activa", profit_target: "", max_drawdown: "", notes: "" };
@@ -102,7 +102,11 @@
 
   // ---------- data access (Supabase) ----------
   function coerceTrade(r) {
-    return { id: r.id, date: r.date, symbol: r.symbol, type: r.type, side: r.side, contracts: Number(r.contracts), entry: Number(r.entry), exit: Number(r.exit), setup: r.setup, emotion: r.emotion, rating: Number(r.rating), note: r.note || "", pnl: Number(r.pnl), account_id: r.account_id || null };
+    return { id: r.id, date: r.date, symbol: r.symbol, type: r.type, side: r.side, contracts: Number(r.contracts), entry: Number(r.entry), exit: Number(r.exit), setup: r.setup, emotion: r.emotion, rating: Number(r.rating), note: r.note || "", pnl: Number(r.pnl), account_id: r.account_id || null, tags: Array.isArray(r.tags) ? r.tags : [], mae: r.mae == null ? "" : Number(r.mae), mfe: r.mfe == null ? "" : Number(r.mfe) };
+  }
+  function parseTags(str) {
+    if (Array.isArray(str)) return str;
+    return String(str || "").split(",").map(function (s) { return s.trim(); }).filter(function (s, i, a) { return s && a.indexOf(s) === i; });
   }
   function coerceAccount(r) {
     return { id: r.id, name: r.name, kind: r.kind, firm: r.firm || "", balance: Number(r.balance), currency: r.currency || "USD", phase: r.phase || "", status: r.status, profit_target: r.profit_target == null ? "" : Number(r.profit_target), max_drawdown: r.max_drawdown == null ? "" : Number(r.max_drawdown), notes: r.notes || "" };
@@ -181,13 +185,34 @@
     document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   }
+  function downloadText(filename, text, mime) {
+    var blob = new Blob([text], { type: (mime || "text/plain") + ";charset=utf-8;" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a"); a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+  function exportAll() {
+    var data = { app: "Bitacora", exported_at: new Date().toISOString(), accounts: state.accounts, trades: state.trades, journal: state.journal };
+    downloadText("bitacora-backup-" + todayISO() + ".json", JSON.stringify(data, null, 2), "application/json");
+  }
+  function exportTax(rows) {
+    if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
+    var sorted = rows.slice().sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+    var headers = ["Año", "Fecha", "Cuenta", "Símbolo", "Instrumento", "Dirección", "Contratos", "PnL"];
+    var lines = [headers.map(csvCell).join(",")];
+    sorted.forEach(function (t) {
+      lines.push([t.date.slice(0, 4), t.date, accountName(t.account_id) || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.pnl].map(csvCell).join(","));
+    });
+    downloadText("bitacora-impuestos-" + todayISO() + ".csv", "﻿" + lines.join("\r\n"), "text/csv");
+  }
 
   // ---------- mutations ----------
   async function saveTrade() {
     var d = state.draft;
     if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
     var pnl = pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
-    var row = { date: d.date, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, account_id: d.account_id || null };
+    var row = { date: d.date, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe) };
     if (state.editId) {
       var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
       if (up.error) { window.alert("No se pudo actualizar la operación: " + up.error.message); return; }
@@ -203,7 +228,7 @@
   }
   function openEdit(t) {
     state.editId = t.id;
-    state.draft = { symbol: t.symbol, type: t.type, side: t.side, contracts: t.contracts, entry: t.entry, exit: t.exit, date: t.date, setup: t.setup, emotion: t.emotion, rating: t.rating, note: t.note };
+    state.draft = { symbol: t.symbol, type: t.type, side: t.side, contracts: t.contracts, entry: t.entry, exit: t.exit, date: t.date, setup: t.setup, emotion: t.emotion, rating: t.rating, note: t.note, account_id: t.account_id || "", tags: (t.tags || []).join(", "), mae: t.mae, mfe: t.mfe };
     state.selectedId = null;
     state.showAdd = true;
     render();
@@ -378,6 +403,7 @@
       pnlStr: signed(t.pnl), pnlColor: pnlColor(t.pnl), stars: stars(t.rating), emotion: t.emotion, emoStyle: emoStyleOf(t.emotion),
     };
   }
+  function exportBtnStyle() { return "display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:#16181C;background:#fff;border:1px solid #E2DDD3;border-radius:9px;padding:8px 12px;"; }
   function emptyCard(title, sub) {
     return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:48px 24px;text-align:center;" },
       h("div", { style: "font-size:15px;font-weight:600;margin-bottom:6px;" }, title),
@@ -638,6 +664,7 @@
     if (state.fSymbol !== "all") ft = ft.filter(function (t) { return t.symbol === state.fSymbol; });
     if (state.fSetup !== "all") ft = ft.filter(function (t) { return t.setup === state.fSetup; });
     if (state.fAccount !== "all") ft = ft.filter(function (t) { return (t.account_id || "none") === state.fAccount; });
+    if (state.fTag !== "all") ft = ft.filter(function (t) { return (t.tags || []).indexOf(state.fTag) >= 0; });
     ft.sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
     var tradeRows = ft.map(buildRow);
     var symbolOpts = Object.keys(state.trades.reduce(function (acc, t) { acc[t.symbol] = 1; return acc; }, {})).sort();
@@ -656,6 +683,13 @@
       accountSelect = h("select", { style: "font-size:12.5px;padding:8px 11px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;", onChange: function (ev) { state.fAccount = ev.target.value; render(); } },
         [h("option", { value: "all" }, "Todas las cuentas"), h("option", { value: "none" }, "Sin cuenta")].concat(state.accounts.map(function (a) { return h("option", { value: a.id }, a.name); })));
       accountSelect.value = state.fAccount;
+    }
+    var allTags = Object.keys(state.trades.reduce(function (acc, t) { (t.tags || []).forEach(function (tg) { acc[tg] = 1; }); return acc; }, {})).sort();
+    var tagSelect = null;
+    if (allTags.length) {
+      tagSelect = h("select", { style: "font-size:12.5px;padding:8px 11px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;", onChange: function (ev) { state.fTag = ev.target.value; render(); } },
+        [h("option", { value: "all" }, "Todas las etiquetas")].concat(allTags.map(function (tg) { return h("option", { value: tg }, tg); })));
+      tagSelect.value = state.fTag;
     }
 
     var gridCols = "84px 60px 1fr 64px 92px 92px 110px 120px 96px";
@@ -679,10 +713,12 @@
     return h("div", { style: "max-width:1180px;margin:0 auto;" },
       h("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px;flex-wrap:wrap;" },
         h("div", { style: "display:flex;gap:4px;background:#F1EDE5;padding:4px;border-radius:10px;" }, fSeg("all", "Todas"), fSeg("win", "Ganadoras"), fSeg("loss", "Perdedoras")),
-        h("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;" }, symbolSelect, setupSelect, accountSelect,
+        h("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;" }, symbolSelect, setupSelect, accountSelect, tagSelect,
           h("span", { style: "font-size:12.5px;color:#807B72;font-family:'Geist Mono',monospace;" }, ft.length + " ops · " + signed(ft.reduce(function (a, t) { return a + t.pnl; }, 0))),
-          h("button", { title: "Exportar a CSV", onClick: function () { exportCSV(ft); }, style: "display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:#16181C;background:#fff;border:1px solid #E2DDD3;border-radius:9px;padding:8px 12px;", hoverBg: "#FAF8F4" },
-            icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>'), "CSV"))),
+          h("button", { title: "Exportar a CSV las operaciones filtradas", onClick: function () { exportCSV(ft); }, style: exportBtnStyle(), hoverBg: "#FAF8F4" },
+            icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>'), "CSV"),
+          h("button", { title: "Exportar CSV para impuestos (año + P&L)", onClick: function () { exportTax(ft); }, style: exportBtnStyle(), hoverBg: "#FAF8F4" }, "Tax"),
+          h("button", { title: "Copia de seguridad de todos tus datos (JSON)", onClick: exportAll, style: exportBtnStyle(), hoverBg: "#FAF8F4" }, "Backup"))),
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;overflow:hidden;" }, headerRow, bodyRows));
   }
 
@@ -752,6 +788,13 @@
     var symbolStats = symArr.map(function (x) {
       return { symbol: x.key, winRate: Math.round(x.wins / x.count * 100) + "%", count: x.count + " ops", pnlStr: signed(x.pnl), pnlColor: pnlColor(x.pnl), barW: (Math.abs(x.pnl) / symMax * 100).toFixed(0) + "%", barBg: x.pnl >= 0 ? "background:#16915B;" : "background:#D6483B;" };
     });
+    var tagG = {};
+    state.trades.forEach(function (t) { (t.tags || []).forEach(function (tg) { if (!tagG[tg]) tagG[tg] = { key: tg, pnl: 0, count: 0, wins: 0 }; tagG[tg].pnl += t.pnl; tagG[tg].count++; if (t.pnl > 0) tagG[tg].wins++; }); });
+    var tagArr = Object.keys(tagG).map(function (k) { return tagG[k]; }).sort(function (a, b) { return b.pnl - a.pnl; });
+    var tagMax = Math.max.apply(null, [1].concat(tagArr.map(function (x) { return Math.abs(x.pnl); })));
+    var tagStats = tagArr.map(function (x) {
+      return { tag: x.key, winRate: Math.round(x.wins / x.count * 100) + "%", count: x.count + " ops", pnlStr: signed(x.pnl), pnlColor: pnlColor(x.pnl), barW: (Math.abs(x.pnl) / tagMax * 100).toFixed(0) + "%", barBg: x.pnl >= 0 ? "background:#3D6FB0;" : "background:#D6483B;" };
+    });
     return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:18px;" },
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:20px;" },
         h("div", { style: "font-size:14px;font-weight:600;margin-bottom:10px;" }, "Curva de capital"),
@@ -768,7 +811,17 @@
               h("div", { style: "height:8px;background:#F1EDE5;border-radius:4px;overflow:hidden;" }, h("div", { style: "height:100%;border-radius:4px;width:" + x.barW + ";" + x.barBg })),
               h("span", { style: "font-size:12.5px;color:#807B72;text-align:right;font-family:'Geist Mono',monospace;" }, x.winRate + " WR · " + x.count),
               h("span", { style: "font-family:'Geist Mono',monospace;font-weight:600;font-size:13.5px;text-align:right;" + x.pnlColor }, x.pnlStr));
-          }))));
+          }))),
+      tagStats.length ? h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;" },
+        h("div", { style: "font-size:14px;font-weight:600;margin-bottom:12px;" }, "P&L por etiqueta"),
+        h("div", { style: "display:flex;flex-direction:column;gap:11px;" },
+          tagStats.map(function (x) {
+            return h("div", { style: "display:grid;grid-template-columns:minmax(80px,auto) 1fr 86px 92px;gap:14px;align-items:center;" },
+              h("span", { style: "font-weight:600;font-size:13px;" }, x.tag),
+              h("div", { style: "height:8px;background:#F1EDE5;border-radius:4px;overflow:hidden;" }, h("div", { style: "height:100%;border-radius:4px;width:" + x.barW + ";" + x.barBg })),
+              h("span", { style: "font-size:12.5px;color:#807B72;text-align:right;font-family:'Geist Mono',monospace;" }, x.winRate + " WR · " + x.count),
+              h("span", { style: "font-family:'Geist Mono',monospace;font-weight:600;font-size:13.5px;text-align:right;" + x.pnlColor }, x.pnlStr));
+          }))) : null);
   }
   function analyticsCard(title, sub, chart) {
     return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;" },
@@ -841,6 +894,11 @@
           h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;" },
             h("div", null, h("div", { style: "font-size:11px;color:#807B72;margin-bottom:5px;" }, "Emoción"), h("span", { style: emoStyleOf(st.emotion) }, st.emotion)),
             h("div", { style: "text-align:right;" }, h("div", { style: "font-size:11px;color:#807B72;margin-bottom:5px;" }, "Valoración"), h("span", { style: "color:#D8B23E;letter-spacing:2px;font-size:15px;" }, stars(st.rating)))),
+          (st.mae !== "" || st.mfe !== "") ? h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;" },
+            infoBox("MAE", st.mae === "" ? "—" : num(st.mae)), infoBox("MFE", st.mfe === "" ? "—" : num(st.mfe))) : null,
+          (st.tags && st.tags.length) ? h("div", { style: "margin-bottom:14px;" },
+            h("div", { style: "font-size:11px;color:#807B72;margin-bottom:6px;" }, "Etiquetas"),
+            h("div", { style: "display:flex;flex-wrap:wrap;gap:6px;" }, st.tags.map(function (tg) { return h("span", { style: "display:inline-flex;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;background:#EAF0F7;color:#3D6FB0;" }, tg); }))) : null,
           accountName(st.account_id) ? h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding:11px 13px;border:1px solid #ECE7DD;border-radius:11px;background:#FBFAF7;" },
             h("span", { style: "font-size:11px;color:#807B72;" }, "Cuenta"),
             h("span", { style: "font-size:13px;font-weight:600;" }, accountName(st.account_id))) : null,
@@ -931,6 +989,10 @@
         field("Emoción", fieldSelect(d, "emotion", [["Tranquilo", "Tranquilo"], ["Confiado", "Confiado"], ["Ansioso", "Ansioso"], ["FOMO", "FOMO"]])),
         field("Valoración", fieldSelect(d, "rating", [["1", "★"], ["2", "★★"], ["3", "★★★"], ["4", "★★★★"], ["5", "★★★★★"]]))),
       field("Cuenta", fieldSelect(d, "account_id", [["", "Sin cuenta"]].concat(state.accounts.map(function (a) { return [a.id, a.name + " · " + (KIND_LABEL[a.kind] || a.kind)]; })))),
+      field("Etiquetas (separadas por comas)", fieldInput(d, "tags", { placeholder: "NY open, breakout, BTC, 5m…", style: "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;" })),
+      h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
+        field("MAE (excursión adversa)", fieldInput(d, "mae", { type: "number", step: "0.01", placeholder: "opcional", style: inMono })),
+        field("MFE (excursión favorable)", fieldInput(d, "mfe", { type: "number", step: "0.01", placeholder: "opcional", style: inMono }))),
       field("Notas", note),
       h("div", { style: "display:flex;align-items:center;justify-content:space-between;background:#FBFAF7;border:1px solid #ECE7DD;border-radius:11px;padding:13px 16px;" },
         h("span", { style: "font-size:12.5px;color:#807B72;" }, "P&L estimado"), previewSpan),
@@ -1025,7 +1087,7 @@
     if (event === "INITIAL_SESSION") return; // handled by getSession below
     state.user = session ? session.user : null;
     if (event === "SIGNED_IN") { state.authBusy = false; state.authEmail = ""; state.authPass = ""; loadData(); }
-    else if (event === "SIGNED_OUT") { state.trades = []; state.journal = []; state.accounts = []; state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; render(); }
+    else if (event === "SIGNED_OUT") { state.trades = []; state.journal = []; state.accounts = []; state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.fTag = "all"; render(); }
   });
   SB.auth.getSession().then(function (res) {
     state.user = res.data.session ? res.data.session.user : null;
