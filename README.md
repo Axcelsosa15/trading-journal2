@@ -16,7 +16,20 @@ online; everything else works offline).
 - **Nueva operación** — add-trade modal with live estimated-P&L preview.
 - **Detalle** — per-trade drawer with metrics, notes, and delete.
 
-All charts are inline SVG; state lives in memory (seeded with sample data).
+All charts are inline SVG. Trades and journal entries **persist in
+`localStorage`** (seeded with sample data on first run), so the journal
+survives reloads.
+
+## Security
+
+- **Content-Security-Policy** (`default-src 'none'`): scripts load only from
+  the same origin and **no inline scripts are allowed**, which neutralizes
+  injected-script XSS.
+- **No `innerHTML` with user data** — all trade/journal text is rendered via
+  `textContent` / `createTextNode`, so typed markup (e.g. `<script>` in a note)
+  is shown as literal text, never executed.
+- `referrer` set to `no-referrer`; `localStorage` access is wrapped in
+  `try/catch` so the app keeps working if storage is unavailable.
 
 ## Files
 

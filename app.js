@@ -62,12 +62,33 @@
   }
 
   // ===================================================================
+  // Persistence (localStorage) — keeps the journal across reloads.
+  // ===================================================================
+  var STORAGE_KEY = "bitacora.v1";
+
+  function loadData() {
+    try {
+      var raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      var d = JSON.parse(raw);
+      if (d && Array.isArray(d.trades) && Array.isArray(d.journal)) return d;
+    } catch (e) { /* corrupt or unavailable storage → fall back to seed */ }
+    return null;
+  }
+  function persist() {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ trades: state.trades, journal: state.journal }));
+    } catch (e) { /* storage full or disabled → keep working in-memory */ }
+  }
+
+  // ===================================================================
   // State
   // ===================================================================
+  var saved = loadData();
   var state = {
     view: "dashboard",
-    trades: seedTrades(),
-    journal: seedJournal(),
+    trades: saved ? saved.trades : seedTrades(),
+    journal: saved ? saved.journal : seedJournal(),
     selectedId: null,
     fResult: "all", fSymbol: "all", fSetup: "all",
     calMonth: "2026-06",
@@ -156,6 +177,7 @@
     var id = state.selectedId;
     state.trades = state.trades.filter(function (t) { return t.id !== id; });
     state.selectedId = null;
+    persist();
     render();
   }
   function shiftMonth(dir) {
@@ -170,6 +192,7 @@
     var t = { id: "t" + Date.now(), date: d.date, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note };
     t.pnl = pnlOf(t);
     state.trades = [t].concat(state.trades);
+    persist();
     closeAdd();
     render();
   }
