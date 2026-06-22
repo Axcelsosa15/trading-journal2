@@ -58,4 +58,8 @@ body { padding-bottom: env(safe-area-inset-bottom); }
   /* Detail drawer and modals go full-width. */
   .dc-drawer { width: 100% !important; }
   .dc-modal { width: 100% !important; }
+
+  /* Correlation rows: drop the bar, keep label + value. */
+  .corr-grid { grid-template-columns: 1fr auto !important; }
+  .corr-bar { display: none !important; }
 }

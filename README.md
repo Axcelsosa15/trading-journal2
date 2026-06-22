@@ -8,21 +8,35 @@ online; everything else works offline).
 ## Features
 
 - **Resumen** — KPIs (P&L neto, win rate, profit factor, esperanza/op.),
-  equity curve, latest trades, and P&L by setup.
-- **Operaciones** — trade table with result / symbol / setup filters.
+  benchmark vs. histórico, control de riesgo, equity curve, latest trades,
+  and P&L by setup.
+- **Operaciones** — trade table with result / symbol / setup / account / tag
+  filters; CSV, tax-CSV and full-JSON-backup exports.
 - **Calendario** — monthly P&L heatmap with navigation and month stats.
-- **Analítica** — equity curve plus P&L by weekday, by emotion, and by symbol.
-- **Diario** — trading-journal entries with mood, daily P&L, and lessons.
-- **Nueva operación** — add-trade modal with live estimated-P&L preview.
-- **Detalle** — per-trade drawer with metrics, notes, and delete.
+- **Analítica** — equity curve plus P&L by weekday, emotion, symbol, tag,
+  session and hour.
+- **Estadísticas** — advanced metrics: expectancy ($ and R), SQN, Sharpe,
+  Sortino, Kelly, profit factor, payoff, drawdown + duration, recovery factor,
+  streaks, percentiles, MAE/MFE edge ratio, plus a P&L distribution histogram
+  and an underwater drawdown curve.
+- **Correlaciones** — Pearson correlation of numeric factors (rating, size,
+  hour, MAE/MFE) with P&L, best/worst category per factor, and an explorer
+  (scatter + trend line, or ranked bars by chosen result measure).
+- **Diario** — journal entries with mood, daily P&L and lessons; quick 10-second
+  note, live search + mood filter, mood-vs-result chart, lessons library, and
+  links to that day's trades.
+- **Cuentas** — funded / live / demo accounts with per-account profit factor,
+  expectancy and realized drawdown.
+- **Ajustes** — risk rules (max trades/day, max daily/weekly loss) and the
+  pre-trade checklist.
 - **PWA / offline** — installable on mobile and desktop (web app manifest +
   service worker). The app shell is cached so it loads with no connection;
   data is cached locally for offline viewing, and trades/journal entries
   created offline are queued and synced automatically on reconnect.
 
-All charts are inline SVG. Trades and journal entries **persist in
-`localStorage`** (seeded with sample data on first run), so the journal
-survives reloads.
+All charts are inline SVG. Data is stored per user in **Supabase** (Postgres
+with Row Level Security); a local snapshot is cached in `localStorage` for
+offline viewing.
 
 ## Security
 
