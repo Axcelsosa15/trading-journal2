@@ -37,7 +37,7 @@ aplicará cuando existan apps nativas; hoy el cliente móvil es la **PWA**).
 |----|------|------|--------|---------------|
 | F-01 | HSTS / cabeceras | Medio | Pendiente (infra) | Cloudflare: HSTS + cabeceras de seguridad (ver abajo). |
 | F-02 | Auth: contraseñas filtradas | Medio | Pendiente (panel) | Activar leaked-password protection (HIBP) en Supabase. |
-| F-03 | Auth: MFA | Medio | Pendiente (panel) | Habilitar MFA TOTP. |
+| F-03 | Auth: MFA | Medio | **App lista** · panel pendiente | UI de 2FA implementada (enrolar con QR + reto en login). Falta activar TOTP en el panel de Supabase. Opcional: forzar `aal2` en RLS. |
 | F-04 | Cadena de suministro (SRI) | Medio | Pendiente | Fijar versión exacta del SDK + `integrity` (SRI). |
 | F-05 | Almacenamiento cliente | Medio | **Resuelto** | Limpieza de `localStorage` en logout. |
 | F-06 | Política de contraseñas | Bajo | Pendiente (panel) | Longitud mínima ≥ 8 en servidor. |
@@ -73,8 +73,28 @@ de bot. Mantener "Enforce HTTPS" en GitHub Pages.
 
 ## Configuración de Supabase (F-02 / F-03 / F-06)
 - Auth → Passwords: **leaked-password protection ON**, longitud mínima ≥ 8.
-- Auth → MFA: habilitar **TOTP**.
+- Auth → MFA: habilitar **TOTP**. La app ya trae la UI de enrolamiento
+  (Ajustes → Gestionar 2FA) y el reto de código en el login.
+- Auth → Rate Limits: ajustar sign-in/sign-up/OTP (defensa DoS del backend).
 - Mantener RLS en **todas** las tablas nuevas (plantilla de políticas arriba).
+
+### Endurecimiento opcional: forzar 2FA en el servidor (RLS)
+El reto de la app es UX cliente. Para que el servidor exija `aal2` a quien tenga
+factor verificado (sin bloquear a quien no tiene MFA), añadir a las políticas:
+```sql
+-- ejemplo para SELECT en trades (replicar en cada tabla/comando):
+using (
+  (select auth.uid()) = user_id
+  and (
+    (select auth.jwt()->>'aal') = 'aal2'
+    or not exists (
+      select 1 from auth.mfa_factors f
+      where f.user_id = (select auth.uid()) and f.status = 'verified'
+    )
+  )
+)
+```
+Aplicar **con el usuario presente** para probar el login y evitar bloqueos.
 
 ## CI/CD: DAST con OWASP ZAP
 `.github/workflows/zap.yml` ejecuta un *baseline scan* manual contra un entorno
