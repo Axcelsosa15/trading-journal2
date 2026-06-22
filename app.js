@@ -93,6 +93,9 @@
     quickNote: "", quickMood: "Enfocado",
     online: (typeof navigator !== "undefined" ? navigator.onLine !== false : true), pending: 0, usingCache: false,
     corrFactor: "rating", corrResult: "expectancy",
+    mfaGate: false, mfaChecked: false, mfa: { code: "", busy: false, error: "" },
+    showMfa: false, mfaFactors: [], mfaFactorsLoaded: false,
+    mfaEnroll: { id: null, qr: "", secret: "", code: "", busy: false, error: "" },
   };
 
   // ---------- helpers ----------
@@ -295,6 +298,88 @@
     }
   }
   function logout() { SB.auth.signOut(); }
+
+  // ---------- MFA (TOTP 2FA) ----------
+  function hasMfaApi() { return SB.auth && SB.auth.mfa; }
+  // Decide whether to block the app behind a 2FA challenge after password login.
+  async function checkMfaGate() {
+    state.mfaChecked = false;
+    if (!hasMfaApi()) { state.mfaGate = false; state.mfaChecked = true; render(); return; }
+    try {
+      var r = await SB.auth.mfa.getAuthenticatorAssuranceLevel();
+      var d = r && r.data;
+      state.mfaGate = !!(d && d.currentLevel === "aal1" && d.nextLevel === "aal2");
+    } catch (e) { state.mfaGate = false; }
+    state.mfaChecked = true;
+    render();
+  }
+  async function submitMfaChallenge() {
+    var code = (state.mfa.code || "").trim();
+    if (!/^\d{6}$/.test(code)) { state.mfa.error = "Introduce el código de 6 dígitos."; render(); return; }
+    state.mfa.busy = true; state.mfa.error = ""; render();
+    try {
+      var fr = await SB.auth.mfa.listFactors();
+      var totp = (fr.data && fr.data.totp) || [];
+      var factor = totp.filter(function (f) { return f.status === "verified"; })[0];
+      if (!factor) { state.mfaGate = false; state.mfa.busy = false; render(); return; }
+      var v = await SB.auth.mfa.challengeAndVerify({ factorId: factor.id, code: code });
+      if (v.error) throw v.error;
+      state.mfa = { code: "", busy: false, error: "" };
+      await checkMfaGate();
+      if (!state.mfaGate) loadData();
+    } catch (e) {
+      state.mfa.busy = false;
+      state.mfa.error = "Código incorrecto o caducado. Inténtalo de nuevo.";
+      render();
+    }
+  }
+  async function loadMfaFactors() {
+    if (!hasMfaApi()) { state.mfaFactorsLoaded = true; return; }
+    try {
+      var fr = await SB.auth.mfa.listFactors();
+      state.mfaFactors = (fr.data && fr.data.totp) || [];
+    } catch (e) { state.mfaFactors = []; }
+    state.mfaFactorsLoaded = true;
+    renderModal();
+  }
+  function openMfa() { state.showMfa = true; state.mfaFactorsLoaded = false; state.mfaEnroll = { id: null, qr: "", secret: "", code: "", busy: false, error: "" }; renderModal(); loadMfaFactors(); }
+  function closeMfa() { state.showMfa = false; renderModal(); render(); }
+  async function startMfaEnroll() {
+    state.mfaEnroll.busy = true; state.mfaEnroll.error = ""; renderModal();
+    try {
+      var r = await SB.auth.mfa.enroll({ factorType: "totp", friendlyName: "Bitácora " + Date.now() });
+      if (r.error) throw r.error;
+      var t = r.data && r.data.totp;
+      state.mfaEnroll = { id: r.data.id, qr: t && t.qr_code, secret: t && t.secret, code: "", busy: false, error: "" };
+    } catch (e) {
+      state.mfaEnroll.busy = false;
+      state.mfaEnroll.error = /not enabled|disabled|unsupported/i.test(e && e.message || "") ? "Activa MFA (TOTP) en el panel de Supabase para poder enrolar." : ("No se pudo iniciar: " + (e && e.message || ""));
+    }
+    renderModal();
+  }
+  async function verifyMfaEnroll() {
+    var code = (state.mfaEnroll.code || "").trim();
+    if (!/^\d{6}$/.test(code)) { state.mfaEnroll.error = "Introduce el código de 6 dígitos."; renderModal(); return; }
+    state.mfaEnroll.busy = true; state.mfaEnroll.error = ""; renderModal();
+    try {
+      var v = await SB.auth.mfa.challengeAndVerify({ factorId: state.mfaEnroll.id, code: code });
+      if (v.error) throw v.error;
+      state.mfaEnroll = { id: null, qr: "", secret: "", code: "", busy: false, error: "" };
+      await loadMfaFactors();
+    } catch (e) {
+      state.mfaEnroll.busy = false;
+      state.mfaEnroll.error = "Código incorrecto o caducado. Reinténtalo.";
+      renderModal();
+    }
+  }
+  async function unenrollMfa(id) {
+    if (!window.confirm("¿Quitar este autenticador? Perderás el segundo factor.")) return;
+    try {
+      var r = await SB.auth.mfa.unenroll({ factorId: id });
+      if (r.error) throw r.error;
+      await loadMfaFactors();
+    } catch (e) { window.alert("No se pudo quitar: " + (e && e.message || "")); }
+  }
 
   // ---------- CSV export ----------
   function csvCell(v) {
@@ -800,8 +885,25 @@
     root.innerHTML = "";
     if (state.booting) { root.appendChild(centerWrap(h("div", { style: "color:#A39E94;font-size:14px;" }, "Cargando…"))); renderModal(); return; }
     if (!state.user) { root.appendChild(authScreen()); renderModal(); return; }
+    if (!state.mfaChecked) { root.appendChild(centerWrap(h("div", { style: "color:#A39E94;font-size:14px;" }, "Verificando seguridad…"))); renderModal(); return; }
+    if (state.mfaGate) { root.appendChild(mfaGateScreen()); renderModal(); return; }
     root.appendChild(appShell());
     renderModal();
+  }
+  function mfaGateScreen() {
+    var input = h("input", { type: "text", inputmode: "numeric", maxlength: "6", autocomplete: "one-time-code", placeholder: "000000", style: "width:100%;text-align:center;letter-spacing:8px;font-family:'Geist Mono',monospace;font-size:24px;padding:12px;border:1px solid #E2DDD3;border-radius:10px;margin-top:6px;", onInput: function (e) { state.mfa.code = e.target.value.replace(/\D/g, ""); } });
+    input.value = state.mfa.code;
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") submitMfaChallenge(); });
+    var card = h("div", { class: "dc-modal", style: "width:380px;max-width:92vw;background:#fff;border:1px solid #ECE7DD;border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,.10);padding:30px 28px;" },
+      h("div", { style: "width:42px;height:42px;border-radius:11px;background:#EAF0F7;display:flex;align-items:center;justify-content:center;margin-bottom:16px;" },
+        icon('<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3D6FB0" stroke-width="1.9"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>')),
+      h("div", { style: "font-size:17px;font-weight:600;margin-bottom:3px;" }, "Verificación en dos pasos"),
+      h("div", { style: "font-size:13px;color:#807B72;margin-bottom:14px;" }, "Introduce el código de 6 dígitos de tu app de autenticación."),
+      input,
+      state.mfa.error ? h("div", { style: "margin-top:10px;font-size:12.5px;color:#D6483B;background:#FCF1EF;border:1px solid #F2D9D5;border-radius:9px;padding:9px 11px;" }, state.mfa.error) : null,
+      h("button", { onClick: submitMfaChallenge, style: "width:100%;padding:12px;border-radius:10px;font-weight:600;font-size:14px;margin-top:16px;" + (state.mfa.busy ? "background:#CFC9BD;color:#fff;cursor:wait;" : "background:#16181C;color:#fff;") }, state.mfa.busy ? "Verificando…" : "Verificar"),
+      h("button", { onClick: logout, style: "width:100%;background:none;border:none;color:#807B72;font-size:13px;margin-top:12px;" }, "Cancelar y cerrar sesión"));
+    return centerWrap(card);
   }
   function centerWrap(child) {
     return h("div", { style: "display:flex;height:100vh;width:100%;align-items:center;justify-content:center;background:#FAF8F4;font-family:Geist,sans-serif;" }, child);
@@ -1695,7 +1797,13 @@
         clTa),
       h("div", { style: "display:flex;align-items:center;gap:14px;" },
         saveBtn,
-        state.settingsSaved ? h("span", { style: "font-size:12.5px;color:#16915B;font-weight:600;" }, "✓ Ajustes guardados") : null));
+        state.settingsSaved ? h("span", { style: "font-size:12.5px;color:#16915B;font-weight:600;" }, "✓ Ajustes guardados") : null),
+      h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:22px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;" },
+        h("div", null,
+          h("div", { style: "font-size:15px;font-weight:600;margin-bottom:3px;" }, "Seguridad · Verificación en dos pasos (2FA)"),
+          h("div", { style: "font-size:12.5px;color:#A39E94;max-width:520px;" }, "Añade un código de tu app de autenticación (TOTP) al iniciar sesión. Requiere tener MFA activado en el proyecto de Supabase.")),
+        h("button", { style: "background:#16181C;color:#fff;font-weight:600;font-size:13.5px;padding:11px 18px;border-radius:10px;flex:none;", onClick: openMfa },
+          icon('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:6px;"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'), "Gestionar 2FA")));
   }
 
   // ---------- detail drawer ----------
@@ -1761,6 +1869,48 @@
     else if (state.showJournalAdd) root.appendChild(journalModal());
     else if (state.showAccountAdd) root.appendChild(accountModal());
     else if (state.showChecklist) root.appendChild(checklistModal());
+    else if (state.showMfa) root.appendChild(mfaModal());
+  }
+
+  function mfaModal() {
+    var en = state.mfaEnroll;
+    var body = [];
+    // Enrolled factors
+    if (!state.mfaFactorsLoaded) {
+      body.push(h("div", { style: "font-size:13px;color:#A39E94;padding:14px;text-align:center;" }, "Cargando…"));
+    } else if (state.mfaFactors.length) {
+      body.push(h("div", { style: "font-size:12px;font-weight:600;color:#54514A;" }, "Autenticadores activos"));
+      body.push(h("div", { style: "display:flex;flex-direction:column;gap:8px;" }, state.mfaFactors.map(function (f) {
+        return h("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 13px;border:1px solid #ECE7DD;border-radius:11px;background:#FBFAF7;" },
+          h("div", null,
+            h("div", { style: "font-size:13px;font-weight:600;" }, f.friendly_name || "Autenticador TOTP"),
+            h("div", { style: "font-size:11px;color:#A39E94;" }, f.status === "verified" ? "Verificado" : "Pendiente")),
+          h("button", { style: "font-size:12px;font-weight:600;color:#D6483B;border:1px solid #F2D9D5;background:#FCF1EF;border-radius:8px;padding:7px 11px;", hoverBg: "#FBEAE7", onClick: function () { unenrollMfa(f.id); } }, "Quitar"));
+      })));
+    } else {
+      body.push(h("div", { style: "font-size:13px;color:#807B72;" }, "No tienes 2FA configurado. Añade un autenticador para proteger tu cuenta."));
+    }
+    // Enrollment flow
+    if (en.id && en.qr) {
+      var codeInput = h("input", { type: "text", inputmode: "numeric", maxlength: "6", placeholder: "000000", style: "width:100%;text-align:center;letter-spacing:8px;font-family:'Geist Mono',monospace;font-size:22px;padding:11px;border:1px solid #E2DDD3;border-radius:10px;", onInput: function (e) { state.mfaEnroll.code = e.target.value.replace(/\D/g, ""); } });
+      codeInput.value = en.code;
+      codeInput.addEventListener("keydown", function (e) { if (e.key === "Enter") verifyMfaEnroll(); });
+      body.push(h("div", { style: "border-top:1px solid #F3EFE7;margin-top:6px;padding-top:16px;display:flex;flex-direction:column;gap:12px;" },
+        h("div", { style: "font-size:13px;color:#54514A;" }, "1. Escanea este código QR con Google Authenticator, Authy, 1Password, etc."),
+        h("div", { style: "display:flex;justify-content:center;" }, h("img", { src: en.qr, alt: "QR", style: "width:180px;height:180px;border:1px solid #ECE7DD;border-radius:12px;background:#fff;" })),
+        en.secret ? h("div", { style: "font-size:11px;color:#A39E94;text-align:center;" }, "o introduce la clave: ", h("span", { style: "font-family:'Geist Mono',monospace;color:#54514A;word-break:break-all;" }, en.secret)) : null,
+        h("div", { style: "font-size:13px;color:#54514A;" }, "2. Escribe el código de 6 dígitos que muestra la app:"),
+        codeInput));
+    }
+    if (en.error) body.push(h("div", { style: "font-size:12.5px;color:#D6483B;background:#FCF1EF;border:1px solid #F2D9D5;border-radius:9px;padding:9px 11px;" }, en.error));
+
+    var footer = [h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #E2DDD3;background:#fff;font-weight:600;font-size:13.5px;", hoverBg: "#FAF8F4", onClick: closeMfa }, "Cerrar")];
+    if (en.id && en.qr) {
+      footer.push(h("button", { style: "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (en.busy ? "background:#CFC9BD;color:#fff;" : "background:#16915B;color:#fff;"), onClick: verifyMfaEnroll }, en.busy ? "Verificando…" : "Activar 2FA"));
+    } else {
+      footer.push(h("button", { style: "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (en.busy ? "background:#CFC9BD;color:#fff;" : "background:#16181C;color:#fff;"), onClick: startMfaEnroll }, en.busy ? "Generando…" : "Añadir autenticador"));
+    }
+    return modalFrame("Verificación en dos pasos (2FA)", closeMfa, body, footer, 460);
   }
 
   function checklistModal() {
@@ -1964,18 +2114,19 @@
     if (event === "INITIAL_SESSION") return; // handled by getSession below
     var prevUser = state.user; // capture before we clear it, to wipe that user's cache
     state.user = session ? session.user : null;
-    if (event === "SIGNED_IN") { state.authBusy = false; state.authEmail = ""; state.authPass = ""; loadData(); }
+    if (event === "SIGNED_IN") { state.authBusy = false; state.authEmail = ""; state.authPass = ""; checkMfaGate().then(function () { if (!state.mfaGate) loadData(); }); }
     else if (event === "SIGNED_OUT") {
       // Wipe the cached financial snapshot + outbox so it can't be read on a
       // shared device after logout (security hardening F-05).
       if (prevUser) { try { localStorage.removeItem("bitacora_cache_" + prevUser.id); localStorage.removeItem("bitacora_outbox_" + prevUser.id); } catch (e) { } }
-      state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.fTag = "all"; state.quickNote = ""; state.jSearch = ""; state.jMood = "all"; state.pending = 0; render();
+      state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.fTag = "all"; state.quickNote = ""; state.jSearch = ""; state.jMood = "all"; state.pending = 0;
+      state.mfaGate = false; state.mfaChecked = false; state.mfaFactors = []; state.mfaFactorsLoaded = false; render();
     }
   });
   SB.auth.getSession().then(function (res) {
     state.user = res.data.session ? res.data.session.user : null;
     state.booting = false;
-    if (state.user) loadData(); else render();
+    if (state.user) { checkMfaGate().then(function () { if (!state.mfaGate) loadData(); }); } else render();
   }).catch(function () { state.booting = false; render(); });
 
   // Connectivity: reflect status and flush queued writes when back online.
