@@ -90,6 +90,7 @@
     showAccountAdd: false, accountEditId: null, accountDraft: blankAccountDraft(),
     settings: defaultSettings(), settingsSaved: false,
     showChecklist: false, checkState: [],
+    quickNote: "", quickMood: "Enfocado",
   };
 
   // ---------- helpers ----------
@@ -310,6 +311,20 @@
     state.journal = [coerceJournal(res.data)].concat(state.journal);
     closeJournalAdd();
     render();
+  }
+  async function saveJournalQuick() {
+    var text = (state.quickNote || "").trim();
+    if (!text) return;
+    var row = { date: todayISO(), mood: state.quickMood, title: text, body: "", lesson: "" };
+    var res = await SB.from("journal").insert(row).select().single();
+    if (res.error) { window.alert("No se pudo guardar la nota: " + res.error.message); return; }
+    state.journal = [coerceJournal(res.data)].concat(state.journal);
+    state.quickNote = "";
+    render();
+  }
+  async function dismissOnboarding() {
+    state.settings.onboardingDone = true;
+    await saveSettings();
   }
   function setView(v) { state.view = v; render(); }
   function shiftMonth(dir) {
@@ -707,10 +722,35 @@
     kids.push(h("div", { style: "font-size:11.5px;color:#A39E94;margin-top:6px;" }, sub));
     return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;" }, kids);
   }
+  function onboardingPanel() {
+    var rk = riskStatus();
+    var steps = [
+      { done: state.accounts.length > 0, title: "Crea tu primera cuenta", desc: "Fondeo, live o demo — para separar tus resultados.", label: "Crear cuenta", action: openAccountAdd },
+      { done: state.trades.length > 0, title: "Registra tu primera operación", desc: "Entrada, salida y cómo te sentiste. Bitácora calcula el P&L.", label: "Nueva operación", action: openAdd },
+      { done: rk.hasRules, title: "Define tus reglas de riesgo", desc: "Límite de pérdida y de operaciones para protegerte de ti mismo.", label: "Configurar", action: function () { setView("settings"); } },
+    ];
+    var done = steps.filter(function (s) { return s.done; }).length;
+    var rows = steps.map(function (st) {
+      return h("div", { style: "display:flex;align-items:center;gap:13px;padding:13px 0;border-top:1px solid #F3EFE7;" },
+        h("span", { style: "width:24px;height:24px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;" + (st.done ? "background:#16915B;color:#fff;" : "background:#F1EDE5;color:#A39E94;") }, st.done ? "✓" : ""),
+        h("div", { style: "flex:1;min-width:0;" },
+          h("div", { style: "font-size:13.5px;font-weight:600;" + (st.done ? "color:#A39E94;text-decoration:line-through;" : "") }, st.title),
+          h("div", { style: "font-size:12px;color:#A39E94;margin-top:1px;" }, st.desc)),
+        st.done ? null : h("button", { style: "flex:none;font-size:12.5px;font-weight:600;color:#fff;background:#16181C;border-radius:9px;padding:8px 13px;", onClick: st.action }, st.label));
+    });
+    return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:22px;" },
+      h("div", { style: "display:flex;align-items:flex-start;justify-content:space-between;gap:12px;" },
+        h("div", null,
+          h("div", { style: "font-size:16px;font-weight:700;letter-spacing:-0.2px;" }, "Bienvenido a Bitácora 👋"),
+          h("div", { style: "font-size:13px;color:#807B72;margin-top:3px;" }, "Tres pasos para sacarle partido. Llevas " + done + " de " + steps.length + ".")),
+        h("button", { style: "flex:none;font-size:12px;color:#A39E94;font-weight:600;", onClick: dismissOnboarding }, "Ocultar guía")),
+      h("div", { style: "margin-top:8px;" }, rows));
+  }
   function dashboardView() {
+    var onb = state.settings.onboardingDone ? null : onboardingPanel();
     if (!state.trades.length) {
-      return h("div", { style: "max-width:1180px;margin:0 auto;" },
-        emptyCard("Aún no tienes operaciones", "Pulsa “Nueva operación” arriba a la derecha para registrar tu primer trade."));
+      return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:18px;" },
+        onb || emptyCard("Aún no tienes operaciones", "Pulsa “Nueva operación” arriba a la derecha para registrar tu primer trade."));
     }
     var m = metrics();
     var setupG = group(function (t) { return t.setup; });
@@ -720,6 +760,7 @@
       h("div", { style: "height:100%;background:#16915B;width:" + Math.round(m.wr * 100) + "%;" }));
     var bench = monthlyBenchmark();
     return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:18px;" },
+      onb,
       h("div", { style: "display:grid;grid-template-columns:repeat(4,1fr);gap:14px;" },
         kpiCard("P&L neto", pnlColor(m.net), signed(m.net), null, m.n + " operaciones cerradas"),
         kpiCard("Win rate", "", Math.round(m.wr * 100) + "%", winBar, m.wins + " ganadoras · " + m.losses + " perdedoras"),
@@ -1004,8 +1045,9 @@
       h("div", { style: "font-size:13px;color:#A39E94;" }, state.journal.length + (state.journal.length === 1 ? " entrada" : " entradas")),
       h("button", { style: "display:flex;align-items:center;gap:7px;background:#fff;border:1px solid #E2DDD3;color:#16181C;font-weight:600;font-size:13px;padding:8px 13px;border-radius:9px;", hoverBg: "#FAF8F4", onClick: openJournalAdd },
         icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'), "Nueva entrada"));
+    var quick = quickJournalBar();
     if (!state.journal.length) {
-      return h("div", { style: "max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:14px;" }, topBar,
+      return h("div", { style: "max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:14px;" }, topBar, quick,
         emptyCard("Tu diario está vacío", "Escribe tu primera reflexión: cómo te sentiste, qué aprendiste, qué mejorar."));
     }
     var cards = state.journal.map(function (j) {
@@ -1023,7 +1065,19 @@
           icon('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16915B" stroke-width="2" style="flex:none;margin-top:1px;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'),
           h("span", { style: "font-size:13px;color:#16181C;line-height:1.5;" }, h("b", { style: "font-weight:600;" }, "Lección: "), j.lesson)) : null);
     });
-    return h("div", { style: "max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:14px;" }, topBar, cards);
+    return h("div", { style: "max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:14px;" }, topBar, quick, cards);
+  }
+  // Journal en 10 segundos: nota de una línea + estado de ánimo, sin abrir el modal.
+  function quickJournalBar() {
+    var moodSel = h("select", { style: "font-size:12.5px;padding:9px 11px;border:1px solid #E2DDD3;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;flex:none;", onChange: function (e) { state.quickMood = e.target.value; } },
+      [["Disciplinado", "Disciplinado"], ["Enfocado", "Enfocado"], ["Paciente", "Paciente"], ["Neutral", "Neutral"], ["Frustrado", "Frustrado"], ["Codicioso", "Codicioso"]].map(function (o) { return h("option", { value: o[0] }, o[1]); }));
+    moodSel.value = state.quickMood;
+    var input = h("input", { placeholder: "Nota rápida de hoy… (Enter para guardar)", style: "flex:1;min-width:0;padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;", onInput: function (e) { state.quickNote = e.target.value; } });
+    input.value = state.quickNote;
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") saveJournalQuick(); });
+    var btn = h("button", { style: "flex:none;background:#16181C;color:#fff;font-weight:600;font-size:13px;padding:10px 16px;border-radius:9px;", onClick: saveJournalQuick }, "Guardar");
+    return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;" },
+      moodSel, input, btn);
   }
 
   // ---------- ajustes ----------
@@ -1323,7 +1377,7 @@
     if (event === "INITIAL_SESSION") return; // handled by getSession below
     state.user = session ? session.user : null;
     if (event === "SIGNED_IN") { state.authBusy = false; state.authEmail = ""; state.authPass = ""; loadData(); }
-    else if (event === "SIGNED_OUT") { state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.fTag = "all"; render(); }
+    else if (event === "SIGNED_OUT") { state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.fTag = "all"; state.quickNote = ""; render(); }
   });
   SB.auth.getSession().then(function (res) {
     state.user = res.data.session ? res.data.session.user : null;
