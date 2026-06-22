@@ -91,7 +91,7 @@
     return Math.round((Number(t.exit) - Number(t.entry)) * PV(t) * Number(t.contracts) * dir);
   }
   function blankDraft() {
-    return { symbol: "MES", type: "future", side: "long", contracts: 1, entry: "", exit: "", date: todayISO(), setup: "Ruptura", emotion: "Tranquilo", rating: 3, note: "", account_id: "", tags: "", mae: "", mfe: "" };
+    return { symbol: "MES", type: "future", side: "long", contracts: 1, entry: "", exit: "", date: todayISO(), time: "", setup: "Ruptura", emotion: "Tranquilo", rating: 3, note: "", account_id: "", tags: "", mae: "", mfe: "" };
   }
   function blankAccountDraft() {
     return { name: "", kind: "fondeo", firm: "", balance: "", currency: "USD", phase: "", status: "activa", profit_target: "", max_drawdown: "", notes: "" };
@@ -102,7 +102,7 @@
 
   // ---------- data access (Supabase) ----------
   function coerceTrade(r) {
-    return { id: r.id, date: r.date, symbol: r.symbol, type: r.type, side: r.side, contracts: Number(r.contracts), entry: Number(r.entry), exit: Number(r.exit), setup: r.setup, emotion: r.emotion, rating: Number(r.rating), note: r.note || "", pnl: Number(r.pnl), account_id: r.account_id || null, tags: Array.isArray(r.tags) ? r.tags : [], mae: r.mae == null ? "" : Number(r.mae), mfe: r.mfe == null ? "" : Number(r.mfe) };
+    return { id: r.id, date: r.date, time: r.time || "", symbol: r.symbol, type: r.type, side: r.side, contracts: Number(r.contracts), entry: Number(r.entry), exit: Number(r.exit), setup: r.setup, emotion: r.emotion, rating: Number(r.rating), note: r.note || "", pnl: Number(r.pnl), account_id: r.account_id || null, tags: Array.isArray(r.tags) ? r.tags : [], mae: r.mae == null ? "" : Number(r.mae), mfe: r.mfe == null ? "" : Number(r.mfe) };
   }
   function parseTags(str) {
     if (Array.isArray(str)) return str;
@@ -212,7 +212,7 @@
     var d = state.draft;
     if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
     var pnl = pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
-    var row = { date: d.date, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe) };
+    var row = { date: d.date, time: d.time || null, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe) };
     if (state.editId) {
       var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
       if (up.error) { window.alert("No se pudo actualizar la operación: " + up.error.message); return; }
@@ -228,7 +228,7 @@
   }
   function openEdit(t) {
     state.editId = t.id;
-    state.draft = { symbol: t.symbol, type: t.type, side: t.side, contracts: t.contracts, entry: t.entry, exit: t.exit, date: t.date, setup: t.setup, emotion: t.emotion, rating: t.rating, note: t.note, account_id: t.account_id || "", tags: (t.tags || []).join(", "), mae: t.mae, mfe: t.mfe };
+    state.draft = { symbol: t.symbol, type: t.type, side: t.side, contracts: t.contracts, entry: t.entry, exit: t.exit, date: t.date, time: t.time || "", setup: t.setup, emotion: t.emotion, rating: t.rating, note: t.note, account_id: t.account_id || "", tags: (t.tags || []).join(", "), mae: t.mae, mfe: t.mfe };
     state.selectedId = null;
     state.showAdd = true;
     render();
@@ -334,6 +334,26 @@
       m[k].pnl += t.pnl; m[k].count++; if (t.pnl > 0) m[k].wins++;
     });
     return m;
+  }
+  // Trading session derived from the entry hour (local time the user typed).
+  var SESSIONS = ["Asia", "Londres", "Nueva York"];
+  function sessionOf(time) {
+    if (!time) return null;
+    var hr = parseInt(String(time).slice(0, 2), 10);
+    if (isNaN(hr)) return null;
+    if (hr >= 7 && hr < 13) return "Londres";
+    if (hr >= 13 && hr < 22) return "Nueva York";
+    return "Asia";
+  }
+  // Monthly net P&L and a benchmark = average of completed past months.
+  function monthlyBenchmark() {
+    var byMonth = {};
+    state.trades.forEach(function (t) { var k = t.date.slice(0, 7); byMonth[k] = (byMonth[k] || 0) + t.pnl; });
+    var cur = thisMonth();
+    var past = Object.keys(byMonth).filter(function (k) { return k !== cur; });
+    if (!past.length) return null;
+    var avg = past.reduce(function (a, k) { return a + byMonth[k]; }, 0) / past.length;
+    return { current: byMonth[cur] || 0, avg: avg, months: past.length, hasCurrent: byMonth.hasOwnProperty(cur) };
   }
 
   // ---------- charts (inline SVG) ----------
@@ -622,12 +642,14 @@
     var recentRows = state.trades.slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; }).slice(0, 6).map(buildRow);
     var winBar = h("div", { style: "display:flex;height:5px;border-radius:3px;overflow:hidden;margin-top:12px;background:#FBEAE7;" },
       h("div", { style: "height:100%;background:#16915B;width:" + Math.round(m.wr * 100) + "%;" }));
+    var bench = monthlyBenchmark();
     return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:18px;" },
       h("div", { style: "display:grid;grid-template-columns:repeat(4,1fr);gap:14px;" },
         kpiCard("P&L neto", pnlColor(m.net), signed(m.net), null, m.n + " operaciones cerradas"),
         kpiCard("Win rate", "", Math.round(m.wr * 100) + "%", winBar, m.wins + " ganadoras · " + m.losses + " perdedoras"),
         kpiCard("Profit factor", "", m.pf.toFixed(2), null, money(m.gp) + " / " + money(m.gl)),
         kpiCard("Esperanza / op.", pnlColor(m.exp), signed(m.exp), null, "media por operación")),
+      bench ? benchmarkPanel(bench) : null,
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:20px 20px 14px;" },
         h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;" },
           h("div", { style: "font-size:14px;font-weight:600;" }, "Curva de capital"),
@@ -639,6 +661,27 @@
           h("div", { style: "font-size:14px;font-weight:600;margin-bottom:4px;" }, "Rendimiento por setup"),
           h("div", { style: "font-size:12px;color:#A39E94;margin-bottom:8px;" }, "P&L acumulado"),
           h("div", null, barsEl(setupData, { w: 420, h: 210 })))));
+  }
+  function benchmarkPanel(b) {
+    var delta = b.current - b.avg;
+    var above = delta >= 0;
+    var deltaStr = (above ? "+" : "−") + "$" + Math.abs(Math.round(delta)).toLocaleString("en-US");
+    var msg = b.hasCurrent
+      ? deltaStr + (above ? " por encima de tu media mensual" : " por debajo de tu media mensual")
+      : "Aún sin operaciones este mes";
+    function cell(label, value, vStyle) {
+      return h("div", null,
+        h("div", { style: "font-size:11px;color:#807B72;" }, label),
+        h("div", { style: "font-family:'Geist Mono',monospace;font-size:20px;font-weight:600;margin-top:4px;" + (vStyle || "") }, value));
+    }
+    return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;" },
+      h("div", null,
+        h("div", { style: "font-size:14px;font-weight:600;" }, "Este mes vs. tu histórico"),
+        h("div", { style: "font-size:12px;color:#A39E94;margin-top:3px;" }, "Comparado con la media de " + b.months + (b.months === 1 ? " mes anterior" : " meses anteriores"))),
+      h("div", { style: "display:flex;align-items:center;gap:28px;" },
+        cell("Este mes", signed(b.current), pnlColor(b.current)),
+        cell("Media mensual", signed(b.avg), pnlColor(b.avg)),
+        h("div", { style: "padding:8px 14px;border-radius:10px;font-size:12.5px;font-weight:600;" + (above ? "background:#E8F3EC;color:#16915B;" : "background:#FBEAE7;color:#D6483B;") }, msg)));
   }
   function recentPanel(rows) {
     var list = rows.map(function (row) {
@@ -795,6 +838,16 @@
     var tagStats = tagArr.map(function (x) {
       return { tag: x.key, winRate: Math.round(x.wins / x.count * 100) + "%", count: x.count + " ops", pnlStr: signed(x.pnl), pnlColor: pnlColor(x.pnl), barW: (Math.abs(x.pnl) / tagMax * 100).toFixed(0) + "%", barBg: x.pnl >= 0 ? "background:#3D6FB0;" : "background:#D6483B;" };
     });
+    var sessG = {}, sessCnt = {}, timed = 0;
+    SESSIONS.forEach(function (sname) { sessG[sname] = 0; sessCnt[sname] = 0; });
+    var hourG = {};
+    state.trades.forEach(function (t) {
+      var sname = sessionOf(t.time);
+      if (sname) { sessG[sname] += t.pnl; sessCnt[sname]++; timed++; }
+      if (t.time) { var hr = parseInt(t.time.slice(0, 2), 10); if (!isNaN(hr)) hourG[hr] = (hourG[hr] || 0) + t.pnl; }
+    });
+    var sessionData = SESSIONS.filter(function (sname) { return sessCnt[sname]; }).map(function (sname) { return { label: sname, value: sessG[sname] }; });
+    var hourData = Object.keys(hourG).map(Number).sort(function (a, b) { return a - b; }).map(function (hr) { return { label: hr + "h", value: hourG[hr] }; });
     return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:18px;" },
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:20px;" },
         h("div", { style: "font-size:14px;font-weight:600;margin-bottom:10px;" }, "Curva de capital"),
@@ -802,6 +855,14 @@
       h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:18px;" },
         analyticsCard("P&L por día de la semana", "acumulado por sesión", barsEl(weekdayData, { w: 460, h: 226 })),
         analyticsCard("P&L por emoción", "psicología vs. resultado", barsEl(emotionData, { w: 460, h: 226 }))),
+      timed ? h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:18px;" },
+        analyticsCard("P&L por sesión", "Asia · Londres · Nueva York (según la hora)", barsEl(sessionData, { w: 460, h: 226 })),
+        analyticsCard("P&L por hora", "por hora de entrada", barsEl(hourData, { w: 460, h: 226 }))) :
+        h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;display:flex;align-items:center;gap:12px;" },
+          icon('<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#A39E94" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>'),
+          h("div", null,
+            h("div", { style: "font-size:13.5px;font-weight:600;" }, "P&L por sesión y por hora"),
+            h("div", { style: "font-size:12.5px;color:#A39E94;margin-top:2px;" }, "Añade la hora a tus operaciones para desbloquear el análisis por sesión (Asia/Londres/NY) y por hora del día."))),
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;" },
         h("div", { style: "font-size:14px;font-weight:600;margin-bottom:12px;" }, "Rendimiento por símbolo"),
         h("div", { style: "display:flex;flex-direction:column;gap:11px;" },
@@ -881,7 +942,7 @@
           h("div", { style: "display:flex;align-items:center;gap:11px;" },
             h("span", { style: r.sideStyle }, r.sideShort),
             h("div", null, h("div", { style: "font-size:17px;font-weight:700;letter-spacing:-0.3px;" }, st.symbol),
-              h("div", { style: "font-size:11.5px;color:#A39E94;" }, instr + " · " + fmtDateLong(st.date)))),
+              h("div", { style: "font-size:11.5px;color:#A39E94;" }, instr + " · " + fmtDateLong(st.date) + (st.time ? " · " + st.time : "")))),
           h("button", { style: "width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#807B72;", hoverBg: "#FAF8F4", onClick: closeDetail }, icon('<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'))),
         h("div", { style: "flex:1;overflow-y:auto;padding:22px;" },
           h("div", { style: "background:#FBFAF7;border:1px solid #ECE7DD;border-radius:13px;padding:18px;text-align:center;margin-bottom:18px;" },
@@ -974,9 +1035,10 @@
     var note = h("textarea", { rows: "3", placeholder: "¿Qué viste? ¿Seguiste el plan?", style: "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;line-height:1.5;resize:vertical;", onInput: function (e) { d.note = e.target.value; } });
     note.value = d.note;
     var body = [
-      h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
+      h("div", { style: "display:grid;grid-template-columns:1.2fr 1fr 0.9fr;gap:14px;" },
         field("Símbolo", fieldInput(d, "symbol", { placeholder: "MES, NQ, SPY…", style: inMono + "text-transform:uppercase;", onInput: function (e) { d.symbol = e.target.value; refresh(); } })),
-        field("Fecha", fieldInput(d, "date", { type: "date", style: inMono }))),
+        field("Fecha", fieldInput(d, "date", { type: "date", style: inMono })),
+        field("Hora (opcional)", fieldInput(d, "time", { type: "time", style: inMono }))),
       h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
         field("Instrumento", fieldSelect(d, "type", [["future", "Futuro"], ["option", "Opción"]], refresh)),
         field("Dirección", fieldSelect(d, "side", [["long", "Largo"], ["short", "Corto"]], refresh))),
