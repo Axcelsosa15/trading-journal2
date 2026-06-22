@@ -1962,9 +1962,15 @@
 
   SB.auth.onAuthStateChange(function (event, session) {
     if (event === "INITIAL_SESSION") return; // handled by getSession below
+    var prevUser = state.user; // capture before we clear it, to wipe that user's cache
     state.user = session ? session.user : null;
     if (event === "SIGNED_IN") { state.authBusy = false; state.authEmail = ""; state.authPass = ""; loadData(); }
-    else if (event === "SIGNED_OUT") { state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.fTag = "all"; state.quickNote = ""; state.jSearch = ""; state.jMood = "all"; render(); }
+    else if (event === "SIGNED_OUT") {
+      // Wipe the cached financial snapshot + outbox so it can't be read on a
+      // shared device after logout (security hardening F-05).
+      if (prevUser) { try { localStorage.removeItem("bitacora_cache_" + prevUser.id); localStorage.removeItem("bitacora_outbox_" + prevUser.id); } catch (e) { } }
+      state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.fTag = "all"; state.quickNote = ""; state.jSearch = ""; state.jMood = "all"; state.pending = 0; render();
+    }
   });
   SB.auth.getSession().then(function (res) {
     state.user = res.data.session ? res.data.session.user : null;
