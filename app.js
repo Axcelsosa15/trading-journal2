@@ -86,7 +86,7 @@
     fResult: "all", fSymbol: "all", fSetup: "all", fAccount: "all", fTag: "all",
     calMonth: thisMonth(),
     showAdd: false, editId: null, draft: blankDraft(),
-    showJournalAdd: false, jdraft: blankJournalDraft(),
+    showJournalAdd: false, jdraft: blankJournalDraft(), journalEditId: null, jSearch: "", jMood: "all",
     showAccountAdd: false, accountEditId: null, accountDraft: blankAccountDraft(),
     settings: defaultSettings(), settingsSaved: false,
     showChecklist: false, checkState: [],
@@ -384,6 +384,14 @@
     var d = state.jdraft;
     if (!d.title.trim()) return;
     var row = { date: d.date, mood: d.mood, title: d.title.trim(), body: d.body, lesson: d.lesson };
+    if (state.journalEditId) {
+      if (!isOnline()) { window.alert("Necesitas conexión para editar una entrada."); return; }
+      var up = await SB.from("journal").update(row).eq("id", state.journalEditId).select().single();
+      if (up.error) { window.alert("No se pudo actualizar la entrada: " + up.error.message); return; }
+      var u = coerceJournal(up.data);
+      state.journal = state.journal.map(function (j) { return j.id === u.id ? u : j; });
+      saveCache(); closeJournalAdd(); render(); return;
+    }
     if (!isOnline()) {
       var tid = "tmp_" + Date.now();
       state.journal = [coerceJournal(Object.assign({ id: tid }, row))].concat(state.journal);
@@ -401,6 +409,19 @@
     saveCache();
     closeJournalAdd();
     render();
+  }
+  async function deleteJournal(id) {
+    if (String(id).slice(0, 4) === "tmp_") {
+      state.journal = state.journal.filter(function (j) { return j.id !== id; });
+      setOutbox(getOutbox().filter(function (it) { return it.tempId !== id; }));
+      saveCache(); closeJournalAdd(); render(); return;
+    }
+    if (!isOnline()) { window.alert("Necesitas conexión para eliminar una entrada."); return; }
+    if (!window.confirm("¿Eliminar esta entrada del diario?")) return;
+    var res = await SB.from("journal").delete().eq("id", id);
+    if (res.error) { window.alert("No se pudo eliminar: " + res.error.message); return; }
+    state.journal = state.journal.filter(function (j) { return j.id !== id; });
+    saveCache(); closeJournalAdd(); render();
   }
   async function saveJournalQuick() {
     var text = (state.quickNote || "").trim();
@@ -493,8 +514,9 @@
 
   function openAdd() { state.editId = null; state.draft = blankDraft(); state.showAdd = true; renderModal(); }
   function closeAdd() { state.showAdd = false; state.editId = null; renderModal(); }
-  function openJournalAdd() { state.jdraft = blankJournalDraft(); state.showJournalAdd = true; renderModal(); }
-  function closeJournalAdd() { state.showJournalAdd = false; renderModal(); }
+  function openJournalAdd() { state.journalEditId = null; state.jdraft = blankJournalDraft(); state.showJournalAdd = true; renderModal(); }
+  function openJournalEdit(j) { state.journalEditId = j.id; state.jdraft = { date: j.date, mood: j.mood, title: j.title, body: j.body, lesson: j.lesson }; state.showJournalAdd = true; renderModal(); }
+  function closeJournalAdd() { state.showJournalAdd = false; state.journalEditId = null; renderModal(); }
   function openChecklist() { state.checkState = (state.settings.checklist || []).map(function () { return false; }); state.showChecklist = true; renderModal(); }
   function closeChecklist() { state.showChecklist = false; renderModal(); }
 
@@ -1372,22 +1394,93 @@
       return h("div", { style: "max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:14px;" }, topBar, quick,
         emptyCard("Tu diario está vacío", "Escribe tu primera reflexión: cómo te sentiste, qué aprendiste, qué mejorar."));
     }
+    // Build cards (with live, focus-preserving DOM filtering).
+    var refs = [];
     var cards = state.journal.map(function (j) {
-      var dayPnl = state.trades.filter(function (t) { return t.date === j.date; }).reduce(function (a, t) { return a + t.pnl; }, 0);
+      var dayTrades = state.trades.filter(function (t) { return t.date === j.date; });
+      var dayPnl = dayTrades.reduce(function (a, t) { return a + t.pnl; }, 0);
       var moodStyle = "display:inline-flex;padding:4px 11px;border-radius:20px;font-size:12px;font-weight:600;background:#" + (moodColors[j.mood] || "F1EDE5;color:#54514A");
-      return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:20px 22px;" },
-        h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;" },
-          h("div", { style: "display:flex;align-items:center;gap:11px;" },
+      var tradeChips = dayTrades.length ? h("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;padding-top:13px;border-top:1px solid #F3EFE7;" },
+        h("span", { style: "font-size:11px;color:#A39E94;align-self:center;margin-right:2px;" }, dayTrades.length + " op. ese día:"),
+        dayTrades.map(function (t) {
+          return h("button", { title: "Ver operación", onClick: function () { select(t.id); }, style: "display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;background:#FBFAF7;border:1px solid #ECE7DD;font-family:'Geist Mono',monospace;", hoverBg: "#F1EDE5" },
+            h("span", { style: "font-family:Geist,sans-serif;" }, t.symbol),
+            h("span", { style: pnlColor(t.pnl) }, signed(t.pnl)));
+        })) : null;
+      var editBtn = h("button", { title: "Editar entrada", onClick: function () { openJournalEdit(j); }, style: "width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#807B72;flex:none;", hoverBg: "#FAF8F4" },
+        icon('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>'));
+      var el = h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:20px 22px;" },
+        h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px;" },
+          h("div", { style: "display:flex;align-items:center;gap:11px;min-width:0;" },
             h("span", { style: "font-size:13px;font-weight:600;color:#807B72;font-family:'Geist Mono',monospace;" }, fmtDateLong(j.date)),
             j.mood ? h("span", { style: moodStyle }, j.mood) : null),
-          h("span", { style: "font-family:'Geist Mono',monospace;font-weight:600;font-size:14px;" + pnlColor(dayPnl) }, signed(dayPnl))),
+          h("div", { style: "display:flex;align-items:center;gap:8px;flex:none;" },
+            h("span", { style: "font-family:'Geist Mono',monospace;font-weight:600;font-size:14px;" + pnlColor(dayPnl) }, signed(dayPnl)),
+            editBtn)),
         h("div", { style: "font-size:15.5px;font-weight:600;margin-bottom:6px;letter-spacing:-0.2px;" }, j.title),
         j.body ? h("div", { style: "font-size:13.5px;color:#54514A;line-height:1.6;" }, j.body) : null,
         j.lesson ? h("div", { style: "display:flex;gap:9px;margin-top:14px;padding-top:13px;border-top:1px solid #F3EFE7;align-items:flex-start;" },
           icon('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16915B" stroke-width="2" style="flex:none;margin-top:1px;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'),
-          h("span", { style: "font-size:13px;color:#16181C;line-height:1.5;" }, h("b", { style: "font-weight:600;" }, "Lección: "), j.lesson)) : null);
+          h("span", { style: "font-size:13px;color:#16181C;line-height:1.5;" }, h("b", { style: "font-weight:600;" }, "Lección: "), j.lesson)) : null,
+        tradeChips);
+      refs.push({ el: el, text: (j.date + " " + fmtDateLong(j.date) + " " + j.mood + " " + j.title + " " + j.body + " " + j.lesson).toLowerCase(), mood: j.mood });
+      return el;
     });
-    return h("div", { style: "max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:14px;" }, topBar, quick, cards);
+    var countEl = h("span", { style: "font-size:12.5px;color:#807B72;font-family:'Geist Mono',monospace;" });
+    function applyFilter() {
+      var q = (state.jSearch || "").trim().toLowerCase(), shown = 0;
+      refs.forEach(function (r) {
+        var ok = (state.jMood === "all" || r.mood === state.jMood) && (!q || r.text.indexOf(q) >= 0);
+        r.el.style.display = ok ? "" : "none";
+        if (ok) shown++;
+      });
+      countEl.textContent = shown + " de " + refs.length;
+    }
+    var searchInput = h("input", { placeholder: "Buscar en el diario…", style: "flex:1;min-width:120px;padding:9px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:13.5px;", onInput: function (e) { state.jSearch = e.target.value; applyFilter(); } });
+    searchInput.value = state.jSearch;
+    var moodFilter = h("select", { style: "font-size:12.5px;padding:9px 11px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;", onChange: function (e) { state.jMood = e.target.value; applyFilter(); } },
+      [h("option", { value: "all" }, "Todos los ánimos")].concat(["Disciplinado", "Enfocado", "Paciente", "Neutral", "Frustrado", "Codicioso"].map(function (mm) { return h("option", { value: mm }, mm); })));
+    moodFilter.value = state.jMood;
+    var filterBar = h("div", { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:10px 12px;" },
+      searchInput, moodFilter, countEl);
+    applyFilter();
+    return h("div", { style: "max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:14px;" },
+      topBar, quick, filterBar,
+      moodPerformancePanel(moodColors),
+      h("div", { style: "display:flex;flex-direction:column;gap:14px;" }, cards),
+      lessonsLibrary());
+  }
+  // Average day P&L grouped by the journal mood logged that day.
+  function moodPerformancePanel(moodColors) {
+    var g = {};
+    state.journal.forEach(function (j) {
+      if (!j.mood) return;
+      var dayPnl = state.trades.filter(function (t) { return t.date === j.date; }).reduce(function (a, t) { return a + t.pnl; }, 0);
+      if (!g[j.mood]) g[j.mood] = { sum: 0, count: 0 };
+      g[j.mood].sum += dayPnl; g[j.mood].count++;
+    });
+    var order = ["Disciplinado", "Enfocado", "Paciente", "Neutral", "Frustrado", "Codicioso"];
+    var data = order.filter(function (m) { return g[m]; }).map(function (m) { return { label: m, value: g[m].sum / g[m].count }; });
+    if (data.length < 2) return null;
+    return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;" },
+      h("div", { style: "font-size:14px;font-weight:600;margin-bottom:2px;" }, "Ánimo vs. resultado"),
+      h("div", { style: "font-size:12px;color:#A39E94;margin-bottom:10px;" }, "P&L medio del día según tu estado de ánimo"),
+      barsEl(data, { w: 760, h: 220 }));
+  }
+  // All recorded lessons, newest first.
+  function lessonsLibrary() {
+    var withLesson = state.journal.filter(function (j) { return j.lesson && j.lesson.trim(); });
+    if (!withLesson.length) return null;
+    return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;" },
+      h("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:12px;" },
+        icon('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16915B" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'),
+        h("div", { style: "font-size:14px;font-weight:600;" }, "Biblioteca de lecciones"),
+        h("span", { style: "font-size:11.5px;color:#A39E94;font-family:'Geist Mono',monospace;" }, withLesson.length)),
+      h("div", { style: "display:flex;flex-direction:column;gap:9px;" }, withLesson.map(function (j) {
+        return h("div", { style: "display:flex;gap:10px;align-items:baseline;padding:8px 0;border-top:1px solid #F3EFE7;" },
+          h("span", { style: "font-size:11px;color:#A39E94;font-family:'Geist Mono',monospace;flex:none;width:88px;" }, fmtDateLong(j.date)),
+          h("span", { style: "font-size:13px;color:#33312C;line-height:1.5;" }, j.lesson));
+      })));
   }
   // Journal en 10 segundos: nota de una línea + estado de ánimo, sin abrir el modal.
   function quickJournalBar() {
@@ -1621,7 +1714,8 @@
 
   function journalModal() {
     var d = state.jdraft;
-    var saveBtn = h("button", { onClick: saveJournal }, "Guardar entrada");
+    var editing = state.journalEditId != null;
+    var saveBtn = h("button", { onClick: saveJournal }, editing ? "Guardar cambios" : "Guardar entrada");
     function refresh() {
       var valid = d.title.trim().length > 0;
       saveBtn.style.cssText = "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (valid ? "background:#16181C;color:#fff;" : "background:#CFC9BD;color:#fff;cursor:not-allowed;");
@@ -1641,9 +1735,10 @@
     ];
     var footer = [
       h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #E2DDD3;background:#fff;font-weight:600;font-size:13.5px;", hoverBg: "#FAF8F4", onClick: closeJournalAdd }, "Cancelar"),
-      saveBtn,
     ];
-    var frame = modalFrame("Nueva entrada de diario", closeJournalAdd, body, footer, 540);
+    if (editing) footer.push(h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #F2D9D5;background:#FCF1EF;color:#D6483B;font-weight:600;font-size:13.5px;", hoverBg: "#FBEAE7", onClick: function () { deleteJournal(state.journalEditId); } }, "Eliminar"));
+    footer.push(saveBtn);
+    var frame = modalFrame(editing ? "Editar entrada de diario" : "Nueva entrada de diario", closeJournalAdd, body, footer, 540);
     refresh();
     return frame;
   }
@@ -1700,7 +1795,7 @@
     if (event === "INITIAL_SESSION") return; // handled by getSession below
     state.user = session ? session.user : null;
     if (event === "SIGNED_IN") { state.authBusy = false; state.authEmail = ""; state.authPass = ""; loadData(); }
-    else if (event === "SIGNED_OUT") { state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.fTag = "all"; state.quickNote = ""; render(); }
+    else if (event === "SIGNED_OUT") { state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.fTag = "all"; state.quickNote = ""; state.jSearch = ""; state.jMood = "all"; render(); }
   });
   SB.auth.getSession().then(function (res) {
     state.user = res.data.session ? res.data.session.user : null;
