@@ -92,6 +92,7 @@
     showChecklist: false, checkState: [],
     quickNote: "", quickMood: "Enfocado",
     online: (typeof navigator !== "undefined" ? navigator.onLine !== false : true), pending: 0, usingCache: false,
+    corrFactor: "rating", corrResult: "expectancy",
   };
 
   // ---------- helpers ----------
@@ -114,6 +115,21 @@
   function percentile(sorted, p) { if (!sorted.length) return 0; var idx = (sorted.length - 1) * p, lo = Math.floor(idx), hi = Math.ceil(idx); return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo); }
   function ratioStr(x, dp) { if (!isFinite(x)) return "∞"; return Number(x).toFixed(dp == null ? 2 : dp); }
   function rStr(x) { return (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(2) + "R"; }
+  // Pearson correlation coefficient for paired numeric data.
+  function pearson(xs, ys) {
+    var n = xs.length;
+    if (n < 2) return 0;
+    var mx = mean(xs), my = mean(ys), cov = 0, sx = 0, sy = 0;
+    for (var i = 0; i < n; i++) { var dx = xs[i] - mx, dy = ys[i] - my; cov += dx * dy; sx += dx * dx; sy += dy * dy; }
+    if (sx === 0 || sy === 0) return 0;
+    return cov / Math.sqrt(sx * sy);
+  }
+  function corrStrength(r) {
+    var a = Math.abs(r);
+    var mag = a < 0.1 ? "nula" : a < 0.3 ? "débil" : a < 0.5 ? "moderada" : a < 0.7 ? "fuerte" : "muy fuerte";
+    return mag + (a < 0.1 ? "" : (r >= 0 ? " positiva" : " negativa"));
+  }
+  function corrColor(r) { return Math.abs(r) < 0.1 ? "color:#807B72;" : (r >= 0 ? "color:#16915B;" : "color:#D6483B;"); }
 
   function PV(t) {
     var P = { ES: 50, MES: 5, NQ: 20, MNQ: 2, CL: 1000, GC: 100, MGC: 10, RTY: 50, MRTY: 5 };
@@ -528,7 +544,7 @@
     var gp = wins.reduce(function (a, t) { return a + t.pnl; }, 0);
     var gl = Math.abs(losses.reduce(function (a, t) { return a + t.pnl; }, 0));
     var net = gp - gl, wr = n ? wins.length / n : 0;
-    return { n: n, net: net, wr: wr, wins: wins.length, losses: losses.length, pf: gl ? gp / gl : (gp > 0 ? 99 : 0), exp: n ? net / n : 0, gp: gp, gl: gl };
+    return { n: n, net: net, wr: wr, wins: wins.length, losses: losses.length, pf: gl ? gp / gl : (gp > 0 ? Infinity : 0), exp: n ? net / n : 0, gp: gp, gl: gl };
   }
   function group(keyFn) {
     var m = {};
@@ -725,6 +741,31 @@
     kids.push(s("text", { x: w - pr, y: h - 9, "text-anchor": "end", "font-size": 10.5, "font-family": "Geist Mono, monospace", fill: "#A39E94" }, signed(mx)));
     return s("svg", { viewBox: "0 0 " + w + " " + h, style: "width:100%;height:auto;display:block;" }, kids);
   }
+  // Scatter of a numeric factor (x) vs P&L (y) with a least-squares trend line.
+  function scatterEl(pairs, xlabel) {
+    if (pairs.length < 2) return null;
+    var w = 1000, h = 320, pl = 52, pr = 16, pt = 16, pb = 36;
+    var xs = pairs.map(function (p) { return p.x; }), ys = pairs.map(function (p) { return p.y; });
+    var xmn = Math.min.apply(null, xs), xmx = Math.max.apply(null, xs); if (xmn === xmx) { xmn -= 1; xmx += 1; }
+    var ymn = Math.min.apply(null, ys.concat([0])), ymx = Math.max.apply(null, ys.concat([0])); if (ymn === ymx) { ymn -= 1; ymx += 1; }
+    var X = function (v) { return pl + (v - xmn) / (xmx - xmn) * (w - pl - pr); };
+    var Y = function (v) { return pt + (1 - (v - ymn) / (ymx - ymn)) * (h - pt - pb); };
+    var kids = [];
+    kids.push(s("line", { x1: pl, y1: pt, x2: pl, y2: h - pb, stroke: "#E2DDD3", "stroke-width": 1 }));
+    kids.push(s("line", { x1: pl, y1: Y(0), x2: w - pr, y2: Y(0), stroke: "#E2DDD3", "stroke-width": 1, "stroke-dasharray": "4 5" }));
+    // trend line (least squares)
+    var mx = mean(xs), my = mean(ys), sxx = 0, sxy = 0;
+    for (var i = 0; i < xs.length; i++) { sxx += (xs[i] - mx) * (xs[i] - mx); sxy += (xs[i] - mx) * (ys[i] - my); }
+    if (sxx > 0) {
+      var slope = sxy / sxx, b0 = my - slope * mx;
+      kids.push(s("line", { x1: X(xmn), y1: Y(b0 + slope * xmn), x2: X(xmx), y2: Y(b0 + slope * xmx), stroke: "#16181C", "stroke-width": 2, opacity: .65 }));
+    }
+    pairs.forEach(function (p) { kids.push(s("circle", { cx: X(p.x), cy: Y(p.y), r: 4, fill: p.y >= 0 ? "#16915B" : "#D6483B", opacity: .6 })); });
+    kids.push(s("text", { x: pl, y: pt + 4, "font-size": 10.5, "font-family": "Geist Mono, monospace", fill: "#A39E94" }, signed(ymx)));
+    kids.push(s("text", { x: pl, y: h - pb, "font-size": 10.5, "font-family": "Geist Mono, monospace", fill: "#A39E94" }, signed(ymn)));
+    kids.push(s("text", { x: (pl + w - pr) / 2, y: h - 8, "text-anchor": "middle", "font-size": 11.5, "font-family": "Geist, sans-serif", fill: "#807B72" }, xlabel + " →"));
+    return s("svg", { viewBox: "0 0 " + w + " " + h, style: "width:100%;height:auto;display:block;" }, kids);
+  }
 
   // ---------- shared style fragments ----------
   function sideStyle(side) {
@@ -840,6 +881,7 @@
         navItem("calendar", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4.5" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/></svg>', "Calendario"),
         navItem("analytics", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><line x1="4" y1="20" x2="4" y2="13"/><line x1="10" y1="20" x2="10" y2="5"/><line x1="16" y1="20" x2="16" y2="9"/><line x1="22" y1="20" x2="22" y2="15"/></svg>', "Analítica"),
         navItem("stats", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 19h16"/><path d="M4 5v14"/><path d="M8 15l3-4 3 2 4-6"/><circle cx="8" cy="15" r="0.6" fill="currentColor"/></svg>', "Estadísticas"),
+        navItem("correlations", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="6" cy="17" r="1.6"/><circle cx="10" cy="11" r="1.6"/><circle cx="14" cy="13" r="1.6"/><circle cx="18" cy="6" r="1.6"/><path d="M4 21V4" stroke-width="1.4"/><path d="M4 21h17" stroke-width="1.4"/></svg>', "Correlaciones"),
         navItem("journal", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v14H6.5A2.5 2.5 0 0 0 4 19.5z"/><line x1="4" y1="19.5" x2="4" y2="5.5"/><line x1="20" y1="17" x2="20" y2="21"/><path d="M6.5 21H20"/></svg>', "Diario"),
         navItem("accounts", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2" y="5" width="20" height="14" rx="2.5"/><line x1="2" y1="10" x2="22" y2="10"/></svg>', "Cuentas", state.accounts.length),
         navItem("settings", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', "Ajustes")),
@@ -858,7 +900,7 @@
     );
   }
 
-  var TITLES = { dashboard: "Resumen", trades: "Operaciones", calendar: "Calendario de resultados", analytics: "Analítica", stats: "Estadísticas avanzadas", journal: "Diario de trading", accounts: "Cuentas", settings: "Ajustes" };
+  var TITLES = { dashboard: "Resumen", trades: "Operaciones", calendar: "Calendario de resultados", analytics: "Analítica", stats: "Estadísticas avanzadas", correlations: "Correlaciones con tus resultados", journal: "Diario de trading", accounts: "Cuentas", settings: "Ajustes" };
 
   function mainColumn() {
     return h("main", { style: "flex:1;display:flex;flex-direction:column;min-width:0;" },
@@ -921,6 +963,7 @@
       case "calendar": return calendarView();
       case "analytics": return analyticsView();
       case "stats": return statsView();
+      case "correlations": return correlationsView();
       case "journal": return journalView();
       case "accounts": return accountsView();
       case "settings": return settingsView();
@@ -1031,7 +1074,7 @@
       h("div", { style: "display:grid;grid-template-columns:repeat(4,1fr);gap:14px;" },
         kpiCard("P&L neto", pnlColor(m.net), signed(m.net), null, m.n + " operaciones cerradas"),
         kpiCard("Win rate", "", Math.round(m.wr * 100) + "%", winBar, m.wins + " ganadoras · " + m.losses + " perdedoras"),
-        kpiCard("Profit factor", "", m.pf.toFixed(2), null, money(m.gp) + " / " + money(m.gl)),
+        kpiCard("Profit factor", "", ratioStr(m.pf), null, money(m.gp) + " / " + money(m.gl)),
         kpiCard("Esperanza / op.", pnlColor(m.exp), signed(m.exp), null, "media por operación")),
       bench ? benchmarkPanel(bench) : null,
       riskTrackerPanel(),
@@ -1380,6 +1423,132 @@
         statCard("MFE medio", x.avgMfe == null ? "—" : num(x.avgMfe), "color:#16915B;", "Cuánto fueron a tu favor de media."),
         statCard("Edge ratio", x.edge == null ? "—" : ratioStr(x.edge), x.edge != null && x.edge >= 1 ? "color:#16915B;" : "", "MFE medio ÷ MAE medio. >1 indica ventaja."),
       ], 3) : null);
+  }
+
+  // ---------- correlaciones ----------
+  var WD = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+  function numericFactors() {
+    return [
+      { key: "rating", label: "Valoración (estrellas)", get: function (t) { return t.rating; } },
+      { key: "contracts", label: "Tamaño (contratos)", get: function (t) { return t.contracts; } },
+      { key: "hour", label: "Hora de entrada", get: function (t) { return t.time ? parseInt(t.time.slice(0, 2), 10) : null; } },
+      { key: "mae", label: "MAE (excursión adversa)", get: function (t) { return t.mae !== "" && t.mae != null ? Math.abs(Number(t.mae)) : null; } },
+      { key: "mfe", label: "MFE (excursión favorable)", get: function (t) { return t.mfe !== "" && t.mfe != null ? Math.abs(Number(t.mfe)) : null; } },
+    ];
+  }
+  function categoricalFactors() {
+    return [
+      { key: "emotion", label: "Emoción", get: function (t) { return t.emotion; } },
+      { key: "setup", label: "Setup", get: function (t) { return t.setup; } },
+      { key: "side", label: "Dirección", get: function (t) { return t.side === "long" ? "Largo" : "Corto"; } },
+      { key: "session", label: "Sesión", get: function (t) { return sessionOf(t.time); } },
+      { key: "weekday", label: "Día de la semana", get: function (t) { return WD[new Date(t.date + "T12:00:00").getDay()]; } },
+      { key: "symbol", label: "Símbolo", get: function (t) { return t.symbol; } },
+      { key: "account", label: "Cuenta", get: function (t) { return accountName(t.account_id) || "Sin cuenta"; } },
+      { key: "tag", label: "Etiqueta", multi: true, get: function (t) { return t.tags || []; } },
+    ];
+  }
+  var RESULTS = {
+    expectancy: { label: "Expectativa / op.", agg: function (p) { return mean(p); }, fmt: signed, color: pnlColor },
+    net: { label: "P&L neto", agg: function (p) { return p.reduce(function (a, x) { return a + x; }, 0); }, fmt: signed, color: pnlColor },
+    winrate: { label: "Win rate", agg: function (p) { return p.filter(function (x) { return x > 0; }).length / p.length * 100; }, fmt: function (v) { return Math.round(v) + "%"; }, color: function () { return ""; } },
+    expR: { label: "Expectativa en R", agg: function (p, ru) { return ru > 0 ? mean(p) / ru : 0; }, fmt: rStr, color: pnlColor },
+  };
+  // Group trades by a categorical factor → [{key,count,pnls,value}] for a result.
+  function groupByFactor(f, resultKey) {
+    var ru = rUnitOf(state.trades), R = RESULTS[resultKey];
+    var g = {};
+    state.trades.forEach(function (t) {
+      var keys = f.multi ? f.get(t) : [f.get(t)];
+      keys.forEach(function (k) {
+        if (k == null || k === "") return;
+        if (!g[k]) g[k] = [];
+        g[k].push(t.pnl);
+      });
+    });
+    return Object.keys(g).map(function (k) {
+      return { key: k, count: g[k].length, value: R.agg(g[k], ru) };
+    }).sort(function (a, b) { return b.value - a.value; });
+  }
+  function correlationsView() {
+    if (state.trades.length < 3) {
+      return h("div", { style: "max-width:1180px;margin:0 auto;" }, emptyCard("Aún no hay suficientes datos", "Registra al menos 3 operaciones (mejor con valoración, emoción, hora y etiquetas) para descubrir qué factores se correlacionan con tus resultados."));
+    }
+    var ru = rUnitOf(state.trades);
+    // ---- Auto-insights: numeric Pearson r vs P&L ----
+    var numInsights = numericFactors().map(function (f) {
+      var pairs = state.trades.map(function (t) { return { x: f.get(t), y: t.pnl }; }).filter(function (p) { return p.x != null && !isNaN(p.x); });
+      if (pairs.length < 3) return null;
+      var r = pearson(pairs.map(function (p) { return p.x; }), pairs.map(function (p) { return p.y; }));
+      return { label: f.label, r: r, n: pairs.length };
+    }).filter(Boolean).sort(function (a, b) { return Math.abs(b.r) - Math.abs(a.r); });
+    var maxR = Math.max.apply(null, [0.0001].concat(numInsights.map(function (x) { return Math.abs(x.r); })));
+    var numRows = numInsights.map(function (x) {
+      return h("div", { class: "corr-grid", style: "display:grid;grid-template-columns:minmax(120px,1.3fr) 1fr 150px;gap:14px;align-items:center;" },
+        h("span", { style: "font-size:13px;font-weight:600;" }, x.label),
+        h("div", { class: "corr-bar", style: "height:8px;background:#F1EDE5;border-radius:4px;overflow:hidden;" }, h("div", { style: "height:100%;border-radius:4px;width:" + (Math.abs(x.r) / maxR * 100).toFixed(0) + "%;" + (x.r >= 0 ? "background:#16915B;" : "background:#D6483B;") })),
+        h("span", { style: "text-align:right;font-family:'Geist Mono',monospace;font-size:13px;font-weight:600;" + corrColor(x.r) }, (x.r >= 0 ? "+" : "−") + Math.abs(x.r).toFixed(2) + " · " + corrStrength(x.r)));
+    });
+    // ---- Auto-insights: best/worst categorical by expectancy ----
+    var catRows = categoricalFactors().map(function (f) {
+      var groups = groupByFactor(f, "expectancy").filter(function (gr) { return gr.count >= 2; });
+      if (groups.length < 2) return null;
+      var best = groups[0], worst = groups[groups.length - 1];
+      return h("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #F3EFE7;" },
+        h("span", { style: "font-size:13px;font-weight:600;flex:none;width:140px;" }, f.label),
+        h("div", { style: "display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;flex:1;" },
+          h("span", { style: "font-size:12px;background:#E8F3EC;color:#16915B;border-radius:20px;padding:3px 10px;font-weight:600;" }, "Mejor: " + best.key + " (" + signed(best.value) + "/op)"),
+          h("span", { style: "font-size:12px;background:#FBEAE7;color:#D6483B;border-radius:20px;padding:3px 10px;font-weight:600;" }, "Peor: " + worst.key + " (" + signed(worst.value) + "/op)")));
+    }).filter(Boolean);
+    // ---- Explorer ----
+    var allFactors = numericFactors().map(function (f) { return { f: f, type: "num" }; }).concat(categoricalFactors().map(function (f) { return { f: f, type: "cat" }; }));
+    var sel = null;
+    for (var k = 0; k < allFactors.length; k++) if (allFactors[k].f.key === state.corrFactor) sel = allFactors[k];
+    if (!sel) sel = allFactors[0];
+    var factorSelect = h("select", { style: "font-size:13px;padding:9px 11px;border:1px solid #E2DDD3;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;", onChange: function (e) { state.corrFactor = e.target.value; render(); } },
+      allFactors.map(function (a) { return h("option", { value: a.f.key }, a.f.label); }));
+    factorSelect.value = sel.f.key;
+    var resNum = sel.type === "num";
+    var resultSelect = h("select", { disabled: resNum, title: resNum ? "Para factores numéricos se mide la correlación con el P&L" : "", style: "font-size:13px;padding:9px 11px;border:1px solid #E2DDD3;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;" + (resNum ? "opacity:.5;cursor:not-allowed;" : ""), onChange: function (e) { state.corrResult = e.target.value; render(); } },
+      Object.keys(RESULTS).map(function (rk) { return h("option", { value: rk }, RESULTS[rk].label); }));
+    resultSelect.value = resNum ? "net" : state.corrResult;
+    var explorer;
+    if (sel.type === "num") {
+      var pairs = state.trades.map(function (t) { return { x: sel.f.get(t), y: t.pnl }; }).filter(function (p) { return p.x != null && !isNaN(p.x); });
+      var r = pairs.length >= 2 ? pearson(pairs.map(function (p) { return p.x; }), pairs.map(function (p) { return p.y; })) : 0;
+      explorer = h("div", null,
+        h("div", { style: "display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px;" },
+          h("div", null, h("div", { style: "font-size:11px;color:#807B72;" }, "Correlación de Pearson (r) con el P&L"),
+            h("div", { style: "font-family:'Geist Mono',monospace;font-size:24px;font-weight:600;" + corrColor(r) }, (r >= 0 ? "+" : "−") + Math.abs(r).toFixed(2))),
+          h("div", { style: "font-size:13px;color:#54514A;" }, "Correlación " + corrStrength(r) + " · " + pairs.length + " operaciones con dato")),
+        pairs.length >= 2 ? scatterEl(pairs, sel.f.label) : h("div", { style: "font-size:13px;color:#A39E94;padding:20px;text-align:center;" }, "Sin datos suficientes para este factor."));
+    } else {
+      var R = RESULTS[state.corrResult];
+      var groups = groupByFactor(sel.f, state.corrResult);
+      var maxAbs = Math.max.apply(null, [1].concat(groups.map(function (g) { return Math.abs(g.value); })));
+      explorer = h("div", { style: "display:flex;flex-direction:column;gap:11px;" }, groups.length ? groups.map(function (g) {
+        return h("div", { class: "corr-grid", style: "display:grid;grid-template-columns:minmax(90px,1fr) 2fr 130px;gap:14px;align-items:center;" },
+          h("span", { style: "font-size:13px;font-weight:600;" }, g.key),
+          h("div", { class: "corr-bar", style: "height:9px;background:#F1EDE5;border-radius:4px;overflow:hidden;" }, h("div", { style: "height:100%;border-radius:4px;width:" + (Math.abs(g.value) / maxAbs * 100).toFixed(0) + "%;" + (g.value >= 0 ? "background:#16915B;" : "background:#D6483B;") })),
+          h("span", { style: "text-align:right;font-family:'Geist Mono',monospace;font-size:13px;font-weight:600;" + (R.color(g.value) || "") }, R.fmt(g.value) + "  ·  " + g.count + " op"));
+      }) : h("div", { style: "font-size:13px;color:#A39E94;padding:16px;text-align:center;" }, "Sin datos para este factor."));
+    }
+    return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:18px;" },
+      numRows.length ? h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:16px;padding:20px;" },
+        h("div", { style: "font-size:15px;font-weight:600;margin-bottom:2px;" }, "Qué influye en tu P&L"),
+        h("div", { style: "font-size:12.5px;color:#A39E94;margin-bottom:14px;" }, "Correlación (Pearson) de cada factor numérico con el resultado de la operación"),
+        h("div", { style: "display:flex;flex-direction:column;gap:12px;" }, numRows)) : null,
+      catRows.length ? h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:16px;padding:20px;" },
+        h("div", { style: "font-size:15px;font-weight:600;margin-bottom:2px;" }, "Tu mejor y peor contexto"),
+        h("div", { style: "font-size:12.5px;color:#A39E94;margin-bottom:6px;" }, "Categoría con mayor y menor expectativa por operación (mín. 2 ops)"),
+        h("div", null, catRows)) : null,
+      h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:16px;padding:20px;" },
+        h("div", { style: "display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px;" },
+          h("div", { style: "font-size:15px;font-weight:600;margin-right:auto;" }, "Explorador"),
+          h("span", { style: "font-size:12px;color:#807B72;" }, "Factor"), factorSelect,
+          h("span", { style: "font-size:12px;color:#807B72;" }, "Resultado"), resultSelect),
+        explorer),
+      h("div", { style: "font-size:11.5px;color:#A39E94;text-align:center;padding:0 20px 8px;" }, "La correlación no implica causalidad. Con muestras pequeñas los resultados son orientativos."));
   }
 
   // ---------- diario ----------
