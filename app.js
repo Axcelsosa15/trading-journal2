@@ -53,6 +53,28 @@
   // ===================================================================
   // State
   // ===================================================================
+  var DEFAULT_CHECKLIST = [
+    "¿La operación está dentro de mi plan?",
+    "¿Tengo el stop y el riesgo definidos?",
+    "¿El ratio riesgo/beneficio es al menos 1.5?",
+    "¿Estoy operando con calma, sin FOMO ni revancha?",
+  ];
+  function defaultSettings() {
+    return { rules: { maxTradesPerDay: "", maxDailyLoss: "", maxWeeklyLoss: "" }, checklist: DEFAULT_CHECKLIST.slice(), onboardingDone: false };
+  }
+  function applySettings(data) {
+    data = data || {};
+    var r = data.rules || {};
+    state.settings = {
+      rules: {
+        maxTradesPerDay: r.maxTradesPerDay == null ? "" : r.maxTradesPerDay,
+        maxDailyLoss: r.maxDailyLoss == null ? "" : r.maxDailyLoss,
+        maxWeeklyLoss: r.maxWeeklyLoss == null ? "" : r.maxWeeklyLoss,
+      },
+      checklist: Array.isArray(data.checklist) && data.checklist.length ? data.checklist : DEFAULT_CHECKLIST.slice(),
+      onboardingDone: !!data.onboardingDone,
+    };
+  }
   var state = {
     booting: true,
     user: null,
@@ -66,6 +88,8 @@
     showAdd: false, editId: null, draft: blankDraft(),
     showJournalAdd: false, jdraft: blankJournalDraft(),
     showAccountAdd: false, accountEditId: null, accountDraft: blankAccountDraft(),
+    settings: defaultSettings(), settingsSaved: false,
+    showChecklist: false, checkState: [],
   };
 
   // ---------- helpers ----------
@@ -120,12 +144,46 @@
       var t = await SB.from("trades").select("*").order("date", { ascending: false }).order("created_at", { ascending: false });
       var j = await SB.from("journal").select("*").order("date", { ascending: false }).order("created_at", { ascending: false });
       var a = await SB.from("accounts").select("*").order("created_at", { ascending: false });
+      var st = await SB.from("user_settings").select("data").maybeSingle();
       state.trades = (t.data || []).map(coerceTrade);
       state.journal = (j.data || []).map(coerceJournal);
       state.accounts = (a.data || []).map(coerceAccount);
+      applySettings(st && st.data ? st.data.data : null);
     } catch (e) { /* leave empty on error */ }
     state.loadingData = false;
     render();
+  }
+  async function saveSettings() {
+    var s = state.settings;
+    s.checklist = (s.checklist || []).map(function (x) { return String(x).trim(); }).filter(function (x) { return x; });
+    var row = { user_id: state.user.id, data: s, updated_at: new Date().toISOString() };
+    var res = await SB.from("user_settings").upsert(row, { onConflict: "user_id" }).select().single();
+    if (res.error) { window.alert("No se pudieron guardar los ajustes: " + res.error.message); return; }
+    if (res.data && res.data.data) applySettings(res.data.data);
+    state.settingsSaved = true;
+    render();
+  }
+
+  // ---------- risk / rules ----------
+  function ruleNum(v) { var n = Number(v); return n > 0 ? n : 0; }
+  function weekStartISO() {
+    var d = new Date(); var dow = (d.getDay() + 6) % 7; // Monday = 0
+    d.setDate(d.getDate() - dow);
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+  function riskStatus() {
+    var r = state.settings.rules;
+    var maxT = ruleNum(r.maxTradesPerDay), maxD = ruleNum(r.maxDailyLoss), maxW = ruleNum(r.maxWeeklyLoss);
+    var today = todayISO(), wkStart = weekStartISO();
+    var todays = state.trades.filter(function (t) { return t.date === today; });
+    var tradesToday = todays.length;
+    var pnlToday = todays.reduce(function (a, t) { return a + t.pnl; }, 0);
+    var pnlWeek = state.trades.filter(function (t) { return t.date >= wkStart; }).reduce(function (a, t) { return a + t.pnl; }, 0);
+    var breaches = [];
+    if (maxT && tradesToday >= maxT) breaches.push("Has alcanzado tu límite de " + maxT + " operaciones hoy (" + tradesToday + ").");
+    if (maxD && pnlToday <= -maxD) breaches.push("Has superado tu pérdida máxima diaria (" + signed(pnlToday) + " de −" + money(maxD) + ").");
+    if (maxW && pnlWeek <= -maxW) breaches.push("Has superado tu pérdida máxima semanal (" + signed(pnlWeek) + " de −" + money(maxW) + ").");
+    return { maxT: maxT, maxD: maxD, maxW: maxW, tradesToday: tradesToday, pnlToday: pnlToday, pnlWeek: pnlWeek, breaches: breaches, hasRules: !!(maxT || maxD || maxW) };
   }
 
   // ---------- auth ----------
@@ -315,6 +373,8 @@
   function closeAdd() { state.showAdd = false; state.editId = null; renderModal(); }
   function openJournalAdd() { state.jdraft = blankJournalDraft(); state.showJournalAdd = true; renderModal(); }
   function closeJournalAdd() { state.showJournalAdd = false; renderModal(); }
+  function openChecklist() { state.checkState = (state.settings.checklist || []).map(function () { return false; }); state.showChecklist = true; renderModal(); }
+  function closeChecklist() { state.showChecklist = false; renderModal(); }
 
   // ---------- metrics & grouping ----------
   function metrics() {
@@ -519,7 +579,8 @@
         navItem("calendar", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4.5" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/></svg>', "Calendario"),
         navItem("analytics", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><line x1="4" y1="20" x2="4" y2="13"/><line x1="10" y1="20" x2="10" y2="5"/><line x1="16" y1="20" x2="16" y2="9"/><line x1="22" y1="20" x2="22" y2="15"/></svg>', "Analítica"),
         navItem("journal", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v14H6.5A2.5 2.5 0 0 0 4 19.5z"/><line x1="4" y1="19.5" x2="4" y2="5.5"/><line x1="20" y1="17" x2="20" y2="21"/><path d="M6.5 21H20"/></svg>', "Diario"),
-        navItem("accounts", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2" y="5" width="20" height="14" rx="2.5"/><line x1="2" y1="10" x2="22" y2="10"/></svg>', "Cuentas", state.accounts.length)),
+        navItem("accounts", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2" y="5" width="20" height="14" rx="2.5"/><line x1="2" y1="10" x2="22" y2="10"/></svg>', "Cuentas", state.accounts.length),
+        navItem("settings", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', "Ajustes")),
       h("div", { style: "margin-top:auto;display:flex;flex-direction:column;gap:12px;" },
         h("div", { style: "border:1px solid #ECE7DD;border-radius:12px;padding:14px;background:#FBFAF7;" },
           h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, "Cuenta · Sim"),
@@ -535,12 +596,23 @@
     );
   }
 
-  var TITLES = { dashboard: "Resumen", trades: "Operaciones", calendar: "Calendario de resultados", analytics: "Analítica", journal: "Diario de trading", accounts: "Cuentas" };
+  var TITLES = { dashboard: "Resumen", trades: "Operaciones", calendar: "Calendario de resultados", analytics: "Analítica", journal: "Diario de trading", accounts: "Cuentas", settings: "Ajustes" };
 
   function mainColumn() {
     return h("main", { style: "flex:1;display:flex;flex-direction:column;min-width:0;" },
       header(),
+      rulesBanner(),
       h("div", { style: "flex:1;overflow-y:auto;padding:28px;" }, state.loadingData ? loadingBody() : viewBody()));
+  }
+  function rulesBanner() {
+    if (state.loadingData) return null;
+    var rk = riskStatus();
+    if (!rk.breaches.length) return null;
+    return h("div", { style: "flex:none;display:flex;align-items:flex-start;gap:11px;padding:12px 28px;background:#FCF1EF;border-bottom:1px solid #F2D9D5;color:#B23A2E;" },
+      icon('<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;margin-top:1px;"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'),
+      h("div", null,
+        h("div", { style: "font-size:13px;font-weight:700;margin-bottom:2px;" }, "Has roto una regla de tu plan"),
+        h("div", { style: "font-size:12.5px;line-height:1.5;" }, rk.breaches.join(" · "))));
   }
   function loadingBody() { return h("div", { style: "max-width:1180px;margin:0 auto;color:#A39E94;font-size:14px;padding:40px;text-align:center;" }, "Cargando tus datos…"); }
 
@@ -558,6 +630,9 @@
         h("div", { style: "display:flex;align-items:center;gap:7px;font-size:12.5px;color:#807B72;padding:7px 12px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;" },
           icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4.5" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>'),
           dateRangeLabel()),
+        h("button", { title: "Checklist antes de operar", style: "display:flex;align-items:center;gap:7px;background:#fff;border:1px solid #E2DDD3;color:#16181C;font-weight:600;font-size:13px;padding:9px 13px;border-radius:9px;", hoverBg: "#FAF8F4", onClick: openChecklist },
+          icon('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'),
+          "Checklist"),
         h("button", { style: "display:flex;align-items:center;gap:7px;background:#16181C;color:#fff;font-weight:600;font-size:13px;padding:9px 15px;border-radius:9px;box-shadow:0 1px 2px rgba(0,0,0,.12);", onClick: openAdd },
           icon('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'),
           "Nueva operación")));
@@ -571,6 +646,7 @@
       case "analytics": return analyticsView();
       case "journal": return journalView();
       case "accounts": return accountsView();
+      case "settings": return settingsView();
     }
   }
 
@@ -650,6 +726,7 @@
         kpiCard("Profit factor", "", m.pf.toFixed(2), null, money(m.gp) + " / " + money(m.gl)),
         kpiCard("Esperanza / op.", pnlColor(m.exp), signed(m.exp), null, "media por operación")),
       bench ? benchmarkPanel(bench) : null,
+      riskTrackerPanel(),
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:20px 20px 14px;" },
         h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;" },
           h("div", { style: "font-size:14px;font-weight:600;" }, "Curva de capital"),
@@ -682,6 +759,35 @@
         cell("Este mes", signed(b.current), pnlColor(b.current)),
         cell("Media mensual", signed(b.avg), pnlColor(b.avg)),
         h("div", { style: "padding:8px 14px;border-radius:10px;font-size:12.5px;font-weight:600;" + (above ? "background:#E8F3EC;color:#16915B;" : "background:#FBEAE7;color:#D6483B;") }, msg)));
+  }
+  function riskTrackerPanel() {
+    var rk = riskStatus();
+    if (!rk.hasRules) {
+      return h("div", { style: "background:#fff;border:1px dashed #E2DDD3;border-radius:14px;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;" },
+        h("div", null,
+          h("div", { style: "font-size:13.5px;font-weight:600;" }, "Control de riesgo diario y semanal"),
+          h("div", { style: "font-size:12.5px;color:#A39E94;margin-top:2px;" }, "Define tus límites (operaciones y pérdida máxima) para que Bitácora te avise si los rompes.")),
+        h("button", { style: "font-size:12.5px;font-weight:600;color:#fff;background:#16181C;border-radius:9px;padding:9px 14px;", onClick: function () { setView("settings"); } }, "Configurar reglas"));
+    }
+    function meter(label, valueStr, valueStyle, pct, danger) {
+      return h("div", { style: "flex:1;min-width:160px;" },
+        h("div", { style: "display:flex;align-items:baseline;justify-content:space-between;margin-bottom:7px;" },
+          h("span", { style: "font-size:12px;color:#807B72;" }, label),
+          h("span", { style: "font-family:'Geist Mono',monospace;font-size:13.5px;font-weight:600;" + (valueStyle || "") }, valueStr)),
+        h("div", { style: "height:7px;background:#F1EDE5;border-radius:4px;overflow:hidden;" },
+          h("div", { style: "height:100%;border-radius:4px;width:" + Math.max(0, Math.min(100, pct)).toFixed(0) + "%;" + (danger ? "background:#D6483B;" : "background:#16915B;") })));
+    }
+    var meters = [];
+    if (rk.maxT) meters.push(meter("Operaciones hoy", rk.tradesToday + " / " + rk.maxT, "", rk.tradesToday / rk.maxT * 100, rk.tradesToday >= rk.maxT));
+    if (rk.maxD) { var dl = rk.pnlToday < 0 ? -rk.pnlToday : 0; meters.push(meter("Pérdida hoy", signed(rk.pnlToday), pnlColor(rk.pnlToday), dl / rk.maxD * 100, dl >= rk.maxD)); }
+    if (rk.maxW) { var wl = rk.pnlWeek < 0 ? -rk.pnlWeek : 0; meters.push(meter("Pérdida esta semana", signed(rk.pnlWeek), pnlColor(rk.pnlWeek), wl / rk.maxW * 100, wl >= rk.maxW)); }
+    return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px 20px;" },
+      h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;" },
+        h("div", { style: "font-size:14px;font-weight:600;" }, "Control de riesgo"),
+        rk.breaches.length
+          ? h("span", { style: "font-size:11.5px;font-weight:600;color:#D6483B;background:#FBEAE7;padding:4px 10px;border-radius:20px;" }, "Regla rota")
+          : h("span", { style: "font-size:11.5px;font-weight:600;color:#16915B;background:#E8F3EC;padding:4px 10px;border-radius:20px;" }, "Dentro de tus límites")),
+      h("div", { style: "display:flex;gap:24px;flex-wrap:wrap;" }, meters));
   }
   function recentPanel(rows) {
     var list = rows.map(function (row) {
@@ -920,6 +1026,40 @@
     return h("div", { style: "max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:14px;" }, topBar, cards);
   }
 
+  // ---------- ajustes ----------
+  function settingsView() {
+    var s = state.settings;
+    var inBase = "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;width:100%;";
+    var mono = inBase + "font-family:'Geist Mono',monospace;";
+    function ruleField(label, hint, name) {
+      var inp = h("input", { type: "number", min: "0", step: "1", placeholder: "Sin límite", style: mono, onInput: function (e) { s.rules[name] = e.target.value; state.settingsSaved = false; } });
+      inp.value = s.rules[name];
+      return h("label", { style: "display:flex;flex-direction:column;gap:6px;" },
+        h("span", { style: "font-size:12.5px;font-weight:600;color:#54514A;" }, label),
+        inp,
+        h("span", { style: "font-size:11.5px;color:#A39E94;" }, hint));
+    }
+    var clText = (s.checklist || []).join("\n");
+    var clTa = h("textarea", { rows: "6", placeholder: "Una pregunta por línea…", style: inBase + "line-height:1.6;resize:vertical;", onInput: function (e) { s.checklist = e.target.value.split("\n"); state.settingsSaved = false; } });
+    clTa.value = clText;
+    var saveBtn = h("button", { style: "background:#16181C;color:#fff;font-weight:600;font-size:13.5px;padding:11px 20px;border-radius:10px;", onClick: saveSettings }, "Guardar ajustes");
+    return h("div", { style: "max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:18px;" },
+      h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:22px;" },
+        h("div", { style: "font-size:15px;font-weight:600;margin-bottom:3px;" }, "Reglas de riesgo"),
+        h("div", { style: "font-size:12.5px;color:#A39E94;margin-bottom:16px;" }, "Bitácora te avisará con una alerta cuando rompas cualquiera de estos límites. Déjalo en blanco para no fijar límite."),
+        h("div", { style: "display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;" },
+          ruleField("Máx. operaciones / día", "Nº de operaciones antes de parar", "maxTradesPerDay"),
+          ruleField("Pérdida máx. diaria ($)", "Pérdida que no quieres superar en un día", "maxDailyLoss"),
+          ruleField("Pérdida máx. semanal ($)", "Pérdida que no quieres superar en la semana", "maxWeeklyLoss"))),
+      h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:22px;" },
+        h("div", { style: "font-size:15px;font-weight:600;margin-bottom:3px;" }, "Checklist antes de operar"),
+        h("div", { style: "font-size:12.5px;color:#A39E94;margin-bottom:16px;" }, "Las preguntas que repasarás al pulsar “Checklist” en la barra superior. Una por línea."),
+        clTa),
+      h("div", { style: "display:flex;align-items:center;gap:14px;" },
+        saveBtn,
+        state.settingsSaved ? h("span", { style: "font-size:12.5px;color:#16915B;font-weight:600;" }, "✓ Ajustes guardados") : null));
+  }
+
   // ---------- detail drawer ----------
   function detailDrawer() {
     var st = state.trades.find(function (t) { return t.id === state.selectedId; });
@@ -981,6 +1121,40 @@
     if (state.showAdd) root.appendChild(addModal());
     else if (state.showJournalAdd) root.appendChild(journalModal());
     else if (state.showAccountAdd) root.appendChild(accountModal());
+    else if (state.showChecklist) root.appendChild(checklistModal());
+  }
+
+  function checklistModal() {
+    var items = state.settings.checklist || [];
+    var saveBtn = h("button", { onClick: closeChecklist }, "Todo listo, a operar");
+    function refresh() {
+      var all = items.length > 0 && state.checkState.every(function (x) { return x; });
+      saveBtn.style.cssText = "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (all ? "background:#16915B;color:#fff;" : "background:#CFC9BD;color:#fff;cursor:not-allowed;");
+      saveBtn.disabled = !all;
+    }
+    var rows = items.length ? items.map(function (q, i) {
+      var box = h("span", { style: "" });
+      function paint() {
+        var on = state.checkState[i];
+        box.style.cssText = "width:22px;height:22px;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;border:2px solid " + (on ? "#16915B" : "#D8D2C6") + ";background:" + (on ? "#16915B" : "#fff") + ";color:#fff;font-size:13px;font-weight:700;";
+        box.textContent = on ? "✓" : "";
+      }
+      paint();
+      var rowEl = h("button", { style: "display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:12px 14px;border:1px solid #ECE7DD;border-radius:11px;background:#fff;", hoverBg: "#FBFAF7", onClick: function () { state.checkState[i] = !state.checkState[i]; paint(); refresh(); } },
+        box, h("span", { style: "font-size:13.5px;" }, q));
+      return rowEl;
+    }) : [h("div", { style: "font-size:13px;color:#A39E94;text-align:center;padding:20px;" }, "No tienes preguntas en tu checklist. Añádelas en Ajustes.")];
+    var body = [
+      h("div", { style: "font-size:12.5px;color:#807B72;margin-bottom:2px;" }, "Repasa tu plan antes de entrar. Marca cada punto."),
+      h("div", { style: "display:flex;flex-direction:column;gap:8px;" }, rows),
+    ];
+    var footer = [
+      h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #E2DDD3;background:#fff;font-weight:600;font-size:13.5px;", hoverBg: "#FAF8F4", onClick: closeChecklist }, "Cerrar"),
+      saveBtn,
+    ];
+    var frame = modalFrame("Checklist antes de operar", closeChecklist, body, footer, 460);
+    refresh();
+    return frame;
   }
 
   function draftPnl() {
@@ -1149,7 +1323,7 @@
     if (event === "INITIAL_SESSION") return; // handled by getSession below
     state.user = session ? session.user : null;
     if (event === "SIGNED_IN") { state.authBusy = false; state.authEmail = ""; state.authPass = ""; loadData(); }
-    else if (event === "SIGNED_OUT") { state.trades = []; state.journal = []; state.accounts = []; state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.fTag = "all"; render(); }
+    else if (event === "SIGNED_OUT") { state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.fTag = "all"; render(); }
   });
   SB.auth.getSession().then(function (res) {
     state.user = res.data.session ? res.data.session.user : null;
