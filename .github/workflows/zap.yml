@@ -1,0 +1,43 @@
+name: ZAP Baseline (DAST)
+
+# Manual DAST scan with OWASP ZAP. Runs only on demand against a STAGING URL —
+# never production, and never the Supabase backend directly. Provide the target
+# when dispatching the workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Staging URL to scan (e.g. https://staging.tu-dominio)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write   # ZAP can open an issue with the findings summary
+
+jobs:
+  zap-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for the optional rules file)
+        uses: actions/checkout@v4
+
+      - name: OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: ${{ inputs.target }}
+          # Optional tuning of false positives; safe to leave absent.
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'          # include the alpha passive rules
+          allow_issue_writing: true  # summarise findings as a GitHub issue
+          fail_action: false         # set true once the baseline is clean to gate merges
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: |
+            report_html.html
+            report_json.json
+          if-no-files-found: ignore
