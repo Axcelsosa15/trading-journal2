@@ -108,6 +108,13 @@
   function stars(r) { return "★★★★★".slice(0, r) + "☆☆☆☆☆".slice(0, 5 - r); }
   function pnlColor(n) { return n >= 0 ? "color:#16915B;" : "color:#D6483B;"; }
 
+  // ---------- numeric helpers (advanced stats) ----------
+  function mean(a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : 0; }
+  function stdev(a) { if (a.length < 2) return 0; var m = mean(a); var v = a.reduce(function (x, y) { return x + (y - m) * (y - m); }, 0) / (a.length - 1); return Math.sqrt(v); }
+  function percentile(sorted, p) { if (!sorted.length) return 0; var idx = (sorted.length - 1) * p, lo = Math.floor(idx), hi = Math.ceil(idx); return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo); }
+  function ratioStr(x, dp) { if (!isFinite(x)) return "∞"; return Number(x).toFixed(dp == null ? 2 : dp); }
+  function rStr(x) { return (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(2) + "R"; }
+
   function PV(t) {
     var P = { ES: 50, MES: 5, NQ: 20, MNQ: 2, CL: 1000, GC: 100, MGC: 10, RTY: 50, MRTY: 5 };
     return t.type === "option" ? 100 : (P[(t.symbol || "").toUpperCase()] || 1);
@@ -475,7 +482,8 @@
     var ts = state.trades.filter(function (t) { return t.account_id === accId; });
     var wins = ts.filter(function (t) { return t.pnl > 0; }).length;
     var net = ts.reduce(function (a, t) { return a + t.pnl; }, 0);
-    return { count: ts.length, net: net, winRate: ts.length ? Math.round(wins / ts.length * 100) : 0 };
+    var s = advancedStats(ts);
+    return { count: ts.length, net: net, winRate: ts.length ? Math.round(wins / ts.length * 100) : 0, pf: s.pf, expectancy: s.expectancy, maxDD: s.maxDD };
   }
   function accountName(accId) {
     if (!accId) return null;
@@ -508,6 +516,78 @@
       m[k].pnl += t.pnl; m[k].count++; if (t.pnl > 0) m[k].wins++;
     });
     return m;
+  }
+  function byDateAsc(a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); }
+  // The R unit (1R) when no per-trade stop is recorded: the average loss size.
+  function rUnitOf(rows) {
+    var losses = rows.filter(function (t) { return t.pnl < 0; }).map(function (t) { return t.pnl; });
+    if (losses.length) return Math.abs(mean(losses));
+    var wins = rows.filter(function (t) { return t.pnl > 0; }).map(function (t) { return t.pnl; });
+    return wins.length ? mean(wins) : 1;
+  }
+  // Full professional statistics for a set of trades.
+  function advancedStats(rows) {
+    rows = rows || state.trades;
+    var n = rows.length;
+    var pnls = rows.map(function (t) { return t.pnl; });
+    var wins = pnls.filter(function (x) { return x > 0; });
+    var losses = pnls.filter(function (x) { return x < 0; });
+    var be = pnls.filter(function (x) { return x === 0; }).length;
+    var gp = wins.reduce(function (a, x) { return a + x; }, 0);
+    var gl = Math.abs(losses.reduce(function (a, x) { return a + x; }, 0));
+    var net = gp - gl, wr = n ? wins.length / n : 0;
+    var avgWin = wins.length ? mean(wins) : 0, avgLoss = losses.length ? mean(losses) : 0;
+    var payoff = avgLoss !== 0 ? avgWin / Math.abs(avgLoss) : (avgWin > 0 ? Infinity : 0);
+    var pf = gl > 0 ? gp / gl : (gp > 0 ? Infinity : 0);
+    var expectancy = n ? net / n : 0;
+    var rUnit = rUnitOf(rows);
+    var rMul = rUnit > 0 ? pnls.map(function (x) { return x / rUnit; }) : pnls.map(function () { return 0; });
+    var expR = mean(rMul), sdR = stdev(rMul);
+    var sqn = (n >= 2 && sdR > 0) ? (expR / sdR) * Math.sqrt(n) : 0;
+    var sd = stdev(pnls);
+    var sharpe = sd > 0 ? mean(pnls) / sd : 0;
+    var downside = Math.sqrt(mean(pnls.map(function (x) { var m = Math.min(x, 0); return m * m; })));
+    var sortino = downside > 0 ? mean(pnls) / downside : 0;
+    var kelly = payoff > 0 && isFinite(payoff) ? (wr - (1 - wr) / payoff) : 0; if (kelly < 0) kelly = 0;
+    // streaks + drawdown over chronological equity
+    var chrono = rows.slice().sort(byDateAsc);
+    var maxW = 0, maxL = 0, cw = 0, cl = 0;
+    chrono.forEach(function (t) {
+      if (t.pnl > 0) { cw++; cl = 0; if (cw > maxW) maxW = cw; }
+      else if (t.pnl < 0) { cl++; cw = 0; if (cl > maxL) maxL = cl; }
+    });
+    var cur = 0;
+    for (var i = chrono.length - 1; i >= 0; i--) {
+      if (chrono[i].pnl > 0) { if (cur < 0) break; cur++; }
+      else if (chrono[i].pnl < 0) { if (cur > 0) break; cur--; }
+      else break;
+    }
+    var eq = 0, peak = 0, maxDD = 0, curDur = 0, maxDur = 0;
+    chrono.forEach(function (t) {
+      eq += t.pnl;
+      if (eq > peak) { peak = eq; curDur = 0; } else { curDur++; if (curDur > maxDur) maxDur = curDur; }
+      var dd = peak - eq; if (dd > maxDD) maxDD = dd;
+    });
+    var recovery = maxDD > 0 ? net / maxDD : (net > 0 ? Infinity : 0);
+    var sorted = pnls.slice().sort(function (a, b) { return a - b; });
+    var maes = rows.filter(function (t) { return t.mae !== "" && t.mae != null; }).map(function (t) { return Math.abs(Number(t.mae)); });
+    var mfes = rows.filter(function (t) { return t.mfe !== "" && t.mfe != null; }).map(function (t) { return Math.abs(Number(t.mfe)); });
+    var avgMae = maes.length ? mean(maes) : null, avgMfe = mfes.length ? mean(mfes) : null;
+    var edge = (avgMae && avgMae > 0 && avgMfe != null) ? avgMfe / avgMae : null;
+    var byDay = {}; rows.forEach(function (t) { byDay[t.date] = (byDay[t.date] || 0) + t.pnl; });
+    var dayVals = Object.keys(byDay).map(function (k) { return byDay[k]; });
+    var greenDays = dayVals.filter(function (x) { return x > 0; }).length;
+    return {
+      n: n, wins: wins.length, losses: losses.length, be: be, net: net, gp: gp, gl: gl, wr: wr,
+      avgWin: avgWin, avgLoss: avgLoss, payoff: payoff, pf: pf, expectancy: expectancy,
+      rUnit: rUnit, rMul: rMul, expR: expR, sdR: sdR, sqn: sqn, sd: sd, sharpe: sharpe, sortino: sortino, kelly: kelly,
+      maxWinStreak: maxW, maxLossStreak: maxL, curStreak: cur, maxDD: maxDD, maxDDDur: maxDur, recovery: recovery,
+      median: percentile(sorted, .5), p25: percentile(sorted, .25), p75: percentile(sorted, .75),
+      best: n ? Math.max.apply(null, pnls) : 0, worst: n ? Math.min.apply(null, pnls) : 0,
+      avgMae: avgMae, avgMfe: avgMfe, edge: edge,
+      days: dayVals.length, greenDays: greenDays, dayWr: dayVals.length ? greenDays / dayVals.length : 0,
+      avgDay: dayVals.length ? mean(dayVals) : 0, bestDay: dayVals.length ? Math.max.apply(null, dayVals) : 0, worstDay: dayVals.length ? Math.min.apply(null, dayVals) : 0,
+    };
   }
   // Trading session derived from the entry hour (local time the user typed).
   var SESSIONS = ["Asia", "Londres", "Nueva York"];
@@ -576,6 +656,51 @@
       kids.push(s("text", { x: cx, y: pos ? y - 6 : y + bh + 13, "text-anchor": "middle", "font-size": 10.5, "font-family": "Geist Mono, monospace", "font-weight": 600, fill: col }, signed(d.value)));
       kids.push(s("text", { x: cx, y: h - 9, "text-anchor": "middle", "font-size": 11, "font-family": "Geist, sans-serif", fill: "#807B72" }, d.label));
     });
+    return s("svg", { viewBox: "0 0 " + w + " " + h, style: "width:100%;height:auto;display:block;" }, kids);
+  }
+  // Underwater (drawdown) curve: distance below the running equity peak.
+  function drawdownEl() {
+    var chrono = state.trades.slice().sort(byDateAsc);
+    if (!chrono.length) return null;
+    var eq = 0, peak = 0, dd = [];
+    chrono.forEach(function (t) { eq += t.pnl; if (eq > peak) peak = eq; dd.push(eq - peak); });
+    var w = 1000, h = 200, pl = 10, pr = 10, pt = 14, pb = 10;
+    var xs = function (i) { return pl + (dd.length <= 1 ? 0 : (i / (dd.length - 1)) * (w - pl - pr)); };
+    var mn = Math.min.apply(null, dd.concat([0])) || -1;
+    var ys = function (v) { return pt + (v / mn) * (h - pt - pb); };
+    var line = dd.map(function (v, i) { return (i ? "L" : "M") + xs(i).toFixed(1) + " " + ys(v).toFixed(1); }).join(" ");
+    var area = "M" + xs(0).toFixed(1) + " " + ys(0).toFixed(1) + " " + dd.map(function (v, i) { return "L" + xs(i).toFixed(1) + " " + ys(v).toFixed(1); }).join(" ") + " L" + xs(dd.length - 1).toFixed(1) + " " + ys(0).toFixed(1) + " Z";
+    var grad = s("linearGradient", { id: "ddg", x1: 0, y1: 0, x2: 0, y2: 1 },
+      s("stop", { offset: "0%", "stop-color": "#D6483B", "stop-opacity": .04 }),
+      s("stop", { offset: "100%", "stop-color": "#D6483B", "stop-opacity": .20 }));
+    return s("svg", { viewBox: "0 0 " + w + " " + h, style: "width:100%;height:auto;display:block;" },
+      s("defs", null, grad),
+      s("line", { x1: pl, y1: ys(0), x2: w - pr, y2: ys(0), stroke: "#E2DDD3", "stroke-width": 1 }),
+      s("path", { d: area, fill: "url(#ddg)" }),
+      s("path", { d: line, fill: "none", stroke: "#D6483B", "stroke-width": 2, "stroke-linejoin": "round" }));
+  }
+  // Distribution histogram of per-trade P&L (binned).
+  function histogramEl(pnls) {
+    if (!pnls.length) return null;
+    var mn = Math.min.apply(null, pnls), mx = Math.max.apply(null, pnls);
+    if (mn === mx) { mn -= 1; mx += 1; }
+    var BINS = Math.min(11, Math.max(5, Math.round(Math.sqrt(pnls.length))));
+    var span = (mx - mn) || 1, bw = span / BINS;
+    var bins = []; for (var b = 0; b < BINS; b++) bins.push({ lo: mn + b * bw, hi: mn + (b + 1) * bw, count: 0 });
+    pnls.forEach(function (x) { var idx = Math.min(BINS - 1, Math.floor((x - mn) / bw)); bins[idx].count++; });
+    var maxC = Math.max.apply(null, bins.map(function (b) { return b.count; })) || 1;
+    var w = 1000, h = 240, pl = 12, pr = 12, pt = 18, pb = 28, plotH = h - pt - pb;
+    var cw = (w - pl - pr) / BINS;
+    var kids = [s("line", { x1: pl, y1: h - pb, x2: w - pr, y2: h - pb, stroke: "#E2DDD3", "stroke-width": 1 })];
+    bins.forEach(function (bn, i) {
+      var bh = bn.count / maxC * plotH, x = pl + cw * i + 2, y = h - pb - bh;
+      var mid = (bn.lo + bn.hi) / 2, col = mid >= 0 ? "#16915B" : "#D6483B";
+      kids.push(s("rect", { x: x, y: y, width: cw - 4, height: Math.max(bh, bn.count ? 2 : 0), rx: 3, fill: col, opacity: .9 }));
+      if (bn.count) kids.push(s("text", { x: x + (cw - 4) / 2, y: y - 5, "text-anchor": "middle", "font-size": 11, "font-family": "Geist Mono, monospace", "font-weight": 600, fill: "#54514A" }, bn.count));
+    });
+    // axis labels at the extremes and zero
+    kids.push(s("text", { x: pl, y: h - 9, "font-size": 10.5, "font-family": "Geist Mono, monospace", fill: "#A39E94" }, signed(mn)));
+    kids.push(s("text", { x: w - pr, y: h - 9, "text-anchor": "end", "font-size": 10.5, "font-family": "Geist Mono, monospace", fill: "#A39E94" }, signed(mx)));
     return s("svg", { viewBox: "0 0 " + w + " " + h, style: "width:100%;height:auto;display:block;" }, kids);
   }
 
@@ -692,6 +817,7 @@
         navItem("trades", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="18" r="1.3" fill="currentColor" stroke="none"/></svg>', "Operaciones", state.trades.length),
         navItem("calendar", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4.5" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/></svg>', "Calendario"),
         navItem("analytics", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><line x1="4" y1="20" x2="4" y2="13"/><line x1="10" y1="20" x2="10" y2="5"/><line x1="16" y1="20" x2="16" y2="9"/><line x1="22" y1="20" x2="22" y2="15"/></svg>', "Analítica"),
+        navItem("stats", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 19h16"/><path d="M4 5v14"/><path d="M8 15l3-4 3 2 4-6"/><circle cx="8" cy="15" r="0.6" fill="currentColor"/></svg>', "Estadísticas"),
         navItem("journal", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v14H6.5A2.5 2.5 0 0 0 4 19.5z"/><line x1="4" y1="19.5" x2="4" y2="5.5"/><line x1="20" y1="17" x2="20" y2="21"/><path d="M6.5 21H20"/></svg>', "Diario"),
         navItem("accounts", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2" y="5" width="20" height="14" rx="2.5"/><line x1="2" y1="10" x2="22" y2="10"/></svg>', "Cuentas", state.accounts.length),
         navItem("settings", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', "Ajustes")),
@@ -710,7 +836,7 @@
     );
   }
 
-  var TITLES = { dashboard: "Resumen", trades: "Operaciones", calendar: "Calendario de resultados", analytics: "Analítica", journal: "Diario de trading", accounts: "Cuentas", settings: "Ajustes" };
+  var TITLES = { dashboard: "Resumen", trades: "Operaciones", calendar: "Calendario de resultados", analytics: "Analítica", stats: "Estadísticas avanzadas", journal: "Diario de trading", accounts: "Cuentas", settings: "Ajustes" };
 
   function mainColumn() {
     return h("main", { style: "flex:1;display:flex;flex-direction:column;min-width:0;" },
@@ -772,6 +898,7 @@
       case "trades": return tradesView();
       case "calendar": return calendarView();
       case "analytics": return analyticsView();
+      case "stats": return statsView();
       case "journal": return journalView();
       case "accounts": return accountsView();
       case "settings": return settingsView();
@@ -811,6 +938,11 @@
       if (a.max_drawdown !== "") rows.push(row("Drawdown máx.", "$" + Number(a.max_drawdown).toLocaleString("en-US")));
       rows.push(row("P&L registrado", signed(st.net), pnlColor(st.net)));
       rows.push(row("Operaciones", st.count + " · " + st.winRate + "% WR", "font-family:'Geist Mono',monospace;"));
+      if (st.count) {
+        rows.push(row("Profit factor", ratioStr(st.pf), st.pf >= 1 ? "color:#16915B;" : "color:#D6483B;"));
+        rows.push(row("Expectativa/op.", signed(st.expectancy), pnlColor(st.expectancy)));
+        rows.push(row("DD realizado", "−" + money(st.maxDD), "color:#D6483B;"));
+      }
       return h("button", { style: "text-align:left;background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:4px;", hoverBg: "#FBFAF7", onClick: function () { openAccountEdit(a); } },
         h("div", { style: "display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px;gap:8px;" },
           h("div", { style: "min-width:0;" },
@@ -1152,6 +1284,82 @@
       h("div", null, chart));
   }
 
+  // ---------- estadísticas avanzadas ----------
+  function statCard(label, value, valueStyle, hint) {
+    return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:13px;padding:15px 16px;" },
+      h("div", { style: "font-size:11.5px;color:#807B72;font-weight:500;min-height:28px;" }, label),
+      h("div", { style: "font-family:'Geist Mono',monospace;font-size:21px;font-weight:600;letter-spacing:-0.5px;margin-top:4px;" + (valueStyle || "") }, value),
+      hint ? h("div", { style: "font-size:11px;color:#A39E94;margin-top:5px;line-height:1.35;" }, hint) : null);
+  }
+  function statSection(title, sub, cards, cols) {
+    return h("div", { style: "background:#FBFAF7;border:1px solid #ECE7DD;border-radius:16px;padding:18px;" },
+      h("div", { style: "margin-bottom:13px;" },
+        h("div", { style: "font-size:14.5px;font-weight:600;" }, title),
+        sub ? h("div", { style: "font-size:12px;color:#A39E94;margin-top:2px;" }, sub) : null),
+      h("div", { style: "display:grid;grid-template-columns:repeat(" + (cols || 4) + ",1fr);gap:12px;" }, cards));
+  }
+  function statsView() {
+    if (!state.trades.length) {
+      return h("div", { style: "max-width:1180px;margin:0 auto;" }, emptyCard("Sin datos para las estadísticas", "Registra operaciones y aquí verás métricas profesionales: expectativa en R, SQN, Sharpe, Sortino, Kelly, drawdown, rachas y distribución."));
+    }
+    var x = advancedStats();
+    var moneyS = function (v) { return signed(v); };
+    return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:16px;" },
+      statSection("Rentabilidad", "Resultado y calidad del beneficio · " + x.n + " operaciones", [
+        statCard("P&L neto", signed(x.net), pnlColor(x.net), money(x.gp) + " brutos / " + money(x.gl) + " en pérdidas"),
+        statCard("Profit factor", ratioStr(x.pf), x.pf >= 1 ? "color:#16915B;" : "color:#D6483B;", "Beneficio bruto ÷ pérdida bruta. >1 es rentable."),
+        statCard("Expectativa / op.", signed(x.expectancy), pnlColor(x.expectancy), "Lo que esperas ganar por operación de media."),
+        statCard("Expectativa en R", rStr(x.expR), pnlColor(x.expR), "Ganancia media por operación medida en múltiplos de riesgo."),
+        statCard("Ganancia media", signed(x.avgWin), "color:#16915B;", x.wins + " ganadoras"),
+        statCard("Pérdida media", signed(x.avgLoss), "color:#D6483B;", x.losses + " perdedoras"),
+        statCard("Ratio de pago", ratioStr(x.payoff), "", "Ganancia media ÷ pérdida media (payoff)."),
+        statCard("Win rate", Math.round(x.wr * 100) + "%", "", x.wins + "G · " + x.losses + "P · " + x.be + " BE"),
+      ]),
+      statSection("Calidad del sistema y riesgo ajustado", "1R = pérdida media (" + money(x.rUnit) + ") al no haber stop registrado", [
+        statCard("SQN", ratioStr(x.sqn), x.sqn >= 2 ? "color:#16915B;" : (x.sqn < 1 ? "color:#D6483B;" : ""), "System Quality Number (Van Tharp). >2 bueno, >3 excelente."),
+        statCard("Sharpe (por op.)", ratioStr(x.sharpe), "", "Rendimiento medio ÷ desviación típica."),
+        statCard("Sortino (por op.)", ratioStr(x.sortino), "", "Como Sharpe pero penaliza solo la volatilidad a la baja."),
+        statCard("Kelly", Math.round(x.kelly * 100) + "%", "", "Fracción óptima teórica. Prudente: la mitad (" + Math.round(x.kelly * 50) + "%)."),
+        statCard("Desv. típica P&L", money(x.sd), "", "Dispersión de resultados por operación."),
+        statCard("Volatilidad en R", ratioStr(x.sdR) + "R", "", "Desviación típica de los R-múltiplos."),
+      ], 3),
+      statSection("Drawdown y rachas", "Resistencia del sistema en el peor tramo", [
+        statCard("Drawdown máximo", "−" + money(x.maxDD), "color:#D6483B;", "Mayor caída desde un máximo de capital."),
+        statCard("Duración del DD", x.maxDDDur + " ops", "", "Operaciones seguidas por debajo del máximo."),
+        statCard("Factor de recuperación", ratioStr(x.recovery), "", "P&L neto ÷ drawdown máximo."),
+        statCard("Racha ganadora máx.", x.maxWinStreak, "color:#16915B;", "Mayor nº de ganadoras seguidas."),
+        statCard("Racha perdedora máx.", x.maxLossStreak, "color:#D6483B;", "Mayor nº de perdedoras seguidas."),
+        statCard("Racha actual", (x.curStreak > 0 ? "+" : "") + x.curStreak, x.curStreak >= 0 ? "color:#16915B;" : "color:#D6483B;", x.curStreak >= 0 ? "ganadoras seguidas" : "perdedoras seguidas"),
+      ], 3),
+      statSection("Distribución de resultados", "Cómo se reparten tus operaciones", [
+        statCard("Mejor operación", signed(x.best), "color:#16915B;"),
+        statCard("Peor operación", signed(x.worst), "color:#D6483B;"),
+        statCard("Mediana", signed(x.median), pnlColor(x.median), "El resultado del 50% central."),
+        statCard("Percentil 25", signed(x.p25), pnlColor(x.p25)),
+        statCard("Percentil 75", signed(x.p75), pnlColor(x.p75)),
+        statCard("Operaciones BE", x.be, "", "Cerradas en empate."),
+      ], 3),
+      h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:16px;padding:18px;" },
+        h("div", { style: "font-size:14.5px;font-weight:600;margin-bottom:2px;" }, "Distribución de P&L por operación"),
+        h("div", { style: "font-size:12px;color:#A39E94;margin-bottom:10px;" }, "Histograma: nº de operaciones por rango de resultado"),
+        histogramEl(state.trades.map(function (t) { return t.pnl; }))),
+      h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:16px;padding:18px;" },
+        h("div", { style: "font-size:14.5px;font-weight:600;margin-bottom:2px;" }, "Curva de drawdown (underwater)"),
+        h("div", { style: "font-size:12px;color:#A39E94;margin-bottom:10px;" }, "Distancia bajo el máximo de capital a lo largo del tiempo"),
+        drawdownEl()),
+      statSection("Consistencia por día", x.days + " días de trading · " + x.greenDays + " verdes", [
+        statCard("% días verdes", Math.round(x.dayWr * 100) + "%", x.dayWr >= 0.5 ? "color:#16915B;" : ""),
+        statCard("P&L medio / día", signed(x.avgDay), pnlColor(x.avgDay)),
+        statCard("Mejor día", signed(x.bestDay), "color:#16915B;"),
+        statCard("Peor día", signed(x.worstDay), "color:#D6483B;"),
+      ]),
+      (x.avgMae != null || x.avgMfe != null) ? statSection("Eficiencia MAE / MFE", "Excursión adversa y favorable (solo operaciones con datos)", [
+        statCard("MAE medio", x.avgMae == null ? "—" : num(x.avgMae), "color:#D6483B;", "Cuánto fueron en tu contra de media."),
+        statCard("MFE medio", x.avgMfe == null ? "—" : num(x.avgMfe), "color:#16915B;", "Cuánto fueron a tu favor de media."),
+        statCard("Edge ratio", x.edge == null ? "—" : ratioStr(x.edge), x.edge != null && x.edge >= 1 ? "color:#16915B;" : "", "MFE medio ÷ MAE medio. >1 indica ventaja."),
+      ], 3) : null);
+  }
+
   // ---------- diario ----------
   function journalView() {
     var moodColors = { Disciplinado: "#E8F3EC;color:#16915B", Enfocado: "#EAF0F7;color:#3D6FB0", Paciente: "#EAF0F7;color:#3D6FB0", Frustrado: "#FBEAE7;color:#D6483B", Codicioso: "#FBF1E6;color:#C77B2A", Neutral: "#F1EDE5;color:#54514A" };
@@ -1256,7 +1464,8 @@
           h("div", { style: "background:#FBFAF7;border:1px solid #ECE7DD;border-radius:13px;padding:18px;text-align:center;margin-bottom:18px;" },
             h("div", { style: "font-size:12px;color:#807B72;" }, "Resultado"),
             h("div", { style: "font-family:'Geist Mono',monospace;font-size:34px;font-weight:700;letter-spacing:-1.5px;margin-top:4px;" + pnlColor(st.pnl) }, signed(st.pnl)),
-            h("div", { style: "font-size:12px;color:#A39E94;margin-top:4px;" }, movePts)),
+            h("div", { style: "font-size:12px;color:#A39E94;margin-top:4px;" }, movePts),
+            (function () { var ru = rUnitOf(state.trades); return ru > 0 ? h("div", { style: "display:inline-block;margin-top:8px;font-family:'Geist Mono',monospace;font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;" + (st.pnl >= 0 ? "background:#E8F3EC;color:#16915B;" : "background:#FBEAE7;color:#D6483B;") }, rStr(st.pnl / ru) + " · 1R = " + money(ru)) : null; })()),
           h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px;" },
             infoBox("Entrada", num(st.entry)), infoBox("Salida", num(st.exit)),
             infoBox("Contratos", st.contracts), infoBox("Setup", st.setup, "font-size:14px;font-weight:600;")),
