@@ -91,6 +91,7 @@
     settings: defaultSettings(), settingsSaved: false,
     showChecklist: false, checkState: [],
     quickNote: "", quickMood: "Enfocado",
+    online: (typeof navigator !== "undefined" ? navigator.onLine !== false : true), pending: 0, usingCache: false,
   };
 
   // ---------- helpers ----------
@@ -139,10 +140,52 @@
   function coerceJournal(r) {
     return { id: r.id, date: r.date, mood: r.mood, title: r.title, body: r.body || "", lesson: r.lesson || "" };
   }
+  // ---------- offline cache + outbox (PWA) ----------
+  function isOnline() { return typeof navigator === "undefined" ? true : navigator.onLine !== false; }
+  function lsGet(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } }
+  function cacheKey() { return "bitacora_cache_" + (state.user ? state.user.id : "anon"); }
+  function outboxKey() { return "bitacora_outbox_" + (state.user ? state.user.id : "anon"); }
+  function saveCache() {
+    if (!state.user) return;
+    lsSet(cacheKey(), { trades: state.trades, journal: state.journal, accounts: state.accounts, settings: state.settings, ts: Date.now() });
+  }
+  function getOutbox() { return lsGet(outboxKey()) || []; }
+  function setOutbox(q) { lsSet(outboxKey(), q); state.pending = q.length; }
+  function enqueue(table, row, tempId) { var q = getOutbox(); q.push({ table: table, row: row, tempId: tempId, ts: Date.now() }); setOutbox(q); }
+  async function flushOutbox() {
+    if (!isOnline() || !state.user) return;
+    var q = getOutbox();
+    if (!q.length) { state.pending = 0; return; }
+    var remaining = [];
+    for (var i = 0; i < q.length; i++) {
+      var item = q[i];
+      try {
+        var res = await SB.from(item.table).insert(item.row).select().single();
+        if (res.error) throw res.error;
+        if (item.table === "trades") { var ct = coerceTrade(res.data); state.trades = state.trades.map(function (t) { return t.id === item.tempId ? ct : t; }); }
+        else if (item.table === "journal") { var cj = coerceJournal(res.data); state.journal = state.journal.map(function (jj) { return jj.id === item.tempId ? cj : jj; }); }
+      } catch (e) { remaining.push(item); }
+    }
+    setOutbox(remaining);
+    saveCache();
+  }
+  function hydrateFromCache() {
+    var c = lsGet(cacheKey());
+    if (!c) return false;
+    state.trades = c.trades || [];
+    state.journal = c.journal || [];
+    state.accounts = c.accounts || [];
+    applySettings(c.settings || null);
+    state.usingCache = true;
+    state.pending = getOutbox().length;
+    return true;
+  }
   async function loadData() {
-    state.loadingData = true; render();
+    state.loadingData = true; state.online = isOnline(); render();
     try {
       var t = await SB.from("trades").select("*").order("date", { ascending: false }).order("created_at", { ascending: false });
+      if (t.error) throw t.error;
       var j = await SB.from("journal").select("*").order("date", { ascending: false }).order("created_at", { ascending: false });
       var a = await SB.from("accounts").select("*").order("created_at", { ascending: false });
       var st = await SB.from("user_settings").select("data").maybeSingle();
@@ -150,18 +193,26 @@
       state.journal = (j.data || []).map(coerceJournal);
       state.accounts = (a.data || []).map(coerceAccount);
       applySettings(st && st.data ? st.data.data : null);
-    } catch (e) { /* leave empty on error */ }
+      state.usingCache = false;
+      saveCache();
+      await flushOutbox();
+    } catch (e) {
+      // Offline or transient failure: fall back to the last cached snapshot.
+      hydrateFromCache();
+    }
     state.loadingData = false;
     render();
   }
   async function saveSettings() {
     var s = state.settings;
     s.checklist = (s.checklist || []).map(function (x) { return String(x).trim(); }).filter(function (x) { return x; });
+    if (!isOnline()) { window.alert("Necesitas conexión para guardar los ajustes."); return; }
     var row = { user_id: state.user.id, data: s, updated_at: new Date().toISOString() };
     var res = await SB.from("user_settings").upsert(row, { onConflict: "user_id" }).select().single();
     if (res.error) { window.alert("No se pudieron guardar los ajustes: " + res.error.message); return; }
     if (res.data && res.data.data) applySettings(res.data.data);
     state.settingsSaved = true;
+    saveCache();
     render();
   }
 
@@ -273,15 +324,28 @@
     var pnl = pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
     var row = { date: d.date, time: d.time || null, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe) };
     if (state.editId) {
+      if (!isOnline()) { window.alert("Necesitas conexión para editar una operación. Las operaciones nuevas sí se guardan sin conexión."); return; }
       var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
       if (up.error) { window.alert("No se pudo actualizar la operación: " + up.error.message); return; }
       var updated = coerceTrade(up.data);
       state.trades = state.trades.map(function (t) { return t.id === updated.id ? updated : t; });
+    } else if (!isOnline()) {
+      // Offline: optimistic insert + queue for sync when back online.
+      var tempId = "tmp_" + Date.now();
+      state.trades = [coerceTrade(Object.assign({ id: tempId }, row))].concat(state.trades);
+      enqueue("trades", row, tempId);
     } else {
-      var res = await SB.from("trades").insert(row).select().single();
-      if (res.error) { window.alert("No se pudo guardar la operación: " + res.error.message); return; }
-      state.trades = [coerceTrade(res.data)].concat(state.trades);
+      try {
+        var res = await SB.from("trades").insert(row).select().single();
+        if (res.error) throw res.error;
+        state.trades = [coerceTrade(res.data)].concat(state.trades);
+      } catch (e) {
+        var tid = "tmp_" + Date.now();
+        state.trades = [coerceTrade(Object.assign({ id: tid }, row))].concat(state.trades);
+        enqueue("trades", row, tid);
+      }
     }
+    saveCache();
     closeAdd();
     render();
   }
@@ -296,19 +360,38 @@
   function closeDetail() { state.selectedId = null; render(); }
   async function deleteSelected() {
     var id = state.selectedId;
+    if (String(id).slice(0, 4) === "tmp_") { // not yet synced — drop locally + from outbox
+      state.trades = state.trades.filter(function (t) { return t.id !== id; });
+      setOutbox(getOutbox().filter(function (it) { return it.tempId !== id; }));
+      state.selectedId = null; saveCache(); render(); return;
+    }
+    if (!isOnline()) { window.alert("Necesitas conexión para eliminar una operación."); return; }
     var res = await SB.from("trades").delete().eq("id", id);
     if (res.error) { window.alert("No se pudo eliminar: " + res.error.message); return; }
     state.trades = state.trades.filter(function (t) { return t.id !== id; });
     state.selectedId = null;
+    saveCache();
     render();
   }
   async function saveJournal() {
     var d = state.jdraft;
     if (!d.title.trim()) return;
     var row = { date: d.date, mood: d.mood, title: d.title.trim(), body: d.body, lesson: d.lesson };
-    var res = await SB.from("journal").insert(row).select().single();
-    if (res.error) { window.alert("No se pudo guardar la entrada: " + res.error.message); return; }
-    state.journal = [coerceJournal(res.data)].concat(state.journal);
+    if (!isOnline()) {
+      var tid = "tmp_" + Date.now();
+      state.journal = [coerceJournal(Object.assign({ id: tid }, row))].concat(state.journal);
+      enqueue("journal", row, tid); saveCache(); closeJournalAdd(); render(); return;
+    }
+    try {
+      var res = await SB.from("journal").insert(row).select().single();
+      if (res.error) throw res.error;
+      state.journal = [coerceJournal(res.data)].concat(state.journal);
+    } catch (e) {
+      var tid2 = "tmp_" + Date.now();
+      state.journal = [coerceJournal(Object.assign({ id: tid2 }, row))].concat(state.journal);
+      enqueue("journal", row, tid2);
+    }
+    saveCache();
     closeJournalAdd();
     render();
   }
@@ -316,10 +399,22 @@
     var text = (state.quickNote || "").trim();
     if (!text) return;
     var row = { date: todayISO(), mood: state.quickMood, title: text, body: "", lesson: "" };
-    var res = await SB.from("journal").insert(row).select().single();
-    if (res.error) { window.alert("No se pudo guardar la nota: " + res.error.message); return; }
-    state.journal = [coerceJournal(res.data)].concat(state.journal);
+    if (!isOnline()) {
+      var tid = "tmp_" + Date.now();
+      state.journal = [coerceJournal(Object.assign({ id: tid }, row))].concat(state.journal);
+      enqueue("journal", row, tid); state.quickNote = ""; saveCache(); render(); return;
+    }
+    try {
+      var res = await SB.from("journal").insert(row).select().single();
+      if (res.error) throw res.error;
+      state.journal = [coerceJournal(res.data)].concat(state.journal);
+    } catch (e) {
+      var tid2 = "tmp_" + Date.now();
+      state.journal = [coerceJournal(Object.assign({ id: tid2 }, row))].concat(state.journal);
+      enqueue("journal", row, tid2);
+    }
     state.quickNote = "";
+    saveCache();
     render();
   }
   async function dismissOnboarding() {
@@ -335,6 +430,7 @@
   async function saveAccount() {
     var d = state.accountDraft;
     if (!d.name.trim()) return;
+    if (!isOnline()) { window.alert("Necesitas conexión para crear o editar cuentas."); return; }
     var row = {
       name: d.name.trim(), kind: d.kind, firm: d.firm || null, balance: Number(d.balance) || 0, currency: d.currency || "USD",
       phase: d.phase || null, status: d.status,
@@ -351,17 +447,20 @@
       if (res.error) { window.alert("No se pudo crear la cuenta: " + res.error.message); return; }
       state.accounts = [coerceAccount(res.data)].concat(state.accounts);
     }
+    saveCache();
     closeAccountAdd();
     render();
   }
   async function deleteAccount() {
     var id = state.accountEditId;
     if (!id) return;
+    if (!isOnline()) { window.alert("Necesitas conexión para eliminar cuentas."); return; }
     if (!window.confirm("¿Eliminar esta cuenta? Las operaciones asociadas se conservarán pero quedarán sin cuenta.")) return;
     var res = await SB.from("accounts").delete().eq("id", id);
     if (res.error) { window.alert("No se pudo eliminar: " + res.error.message); return; }
     state.accounts = state.accounts.filter(function (a) { return a.id !== id; });
     state.trades = state.trades.map(function (t) { return t.account_id === id ? Object.assign({}, t, { account_id: null }) : t; });
+    saveCache();
     closeAccountAdd();
     render();
   }
@@ -562,7 +661,7 @@
 
   // ---------- app shell ----------
   function appShell() {
-    return h("div", { style: "display:flex;height:100vh;width:100%;overflow:hidden;background:#FAF8F4;font-family:Geist,sans-serif;color:#16181C;-webkit-font-smoothing:antialiased;font-size:14px;" },
+    return h("div", { class: "app-shell", style: "display:flex;height:100vh;width:100%;overflow:hidden;background:#FAF8F4;font-family:Geist,sans-serif;color:#16181C;-webkit-font-smoothing:antialiased;font-size:14px;" },
       sidebar(), mainColumn(), detailDrawer());
   }
 
@@ -581,11 +680,11 @@
       return h("button", { style: navStyle(view), onClick: function () { setView(view); }, hoverBg: state.view === view ? "" : "#FAF8F4" }, children);
     }
 
-    return h("aside", { style: "width:240px;flex:none;display:flex;flex-direction:column;background:#FFFFFF;border-right:1px solid #ECE7DD;padding:20px 14px;" },
+    return h("aside", { class: "side", style: "width:240px;flex:none;display:flex;flex-direction:column;background:#FFFFFF;border-right:1px solid #ECE7DD;padding:20px 14px;" },
       h("div", { style: "display:flex;align-items:center;gap:10px;padding:6px 8px 22px 8px;" },
         h("div", { style: "width:30px;height:30px;border-radius:8px;background:#16181C;display:flex;align-items:center;justify-content:center;flex:none;" },
           icon('<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="4" y="9" width="3.4" height="11" rx="1" fill="#16915B"/><line x1="5.7" y1="5" x2="5.7" y2="9" stroke="#16915B" stroke-width="1.6"/><line x1="5.7" y1="20" x2="5.7" y2="22.5" stroke="#16915B" stroke-width="1.6"/><rect x="13" y="6" width="3.4" height="9" rx="1" fill="#D6483B"/><line x1="14.7" y1="3" x2="14.7" y2="6" stroke="#D6483B" stroke-width="1.6"/><line x1="14.7" y1="15" x2="14.7" y2="18" stroke="#D6483B" stroke-width="1.6"/></svg>')),
-        h("div", { style: "line-height:1;" },
+        h("div", { class: "side-text", style: "line-height:1;" },
           h("div", { style: "font-weight:700;font-size:15px;letter-spacing:-0.2px;" }, "Bitácora"),
           h("div", { style: "font-size:11px;color:#A39E94;margin-top:3px;letter-spacing:.3px;" }, "TRADING JOURNAL"))),
       h("nav", { style: "display:flex;flex-direction:column;gap:2px;" },
@@ -596,7 +695,7 @@
         navItem("journal", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v14H6.5A2.5 2.5 0 0 0 4 19.5z"/><line x1="4" y1="19.5" x2="4" y2="5.5"/><line x1="20" y1="17" x2="20" y2="21"/><path d="M6.5 21H20"/></svg>', "Diario"),
         navItem("accounts", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2" y="5" width="20" height="14" rx="2.5"/><line x1="2" y1="10" x2="22" y2="10"/></svg>', "Cuentas", state.accounts.length),
         navItem("settings", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', "Ajustes")),
-      h("div", { style: "margin-top:auto;display:flex;flex-direction:column;gap:12px;" },
+      h("div", { class: "side-foot", style: "margin-top:auto;display:flex;flex-direction:column;gap:12px;" },
         h("div", { style: "border:1px solid #ECE7DD;border-radius:12px;padding:14px;background:#FBFAF7;" },
           h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, "Cuenta · Sim"),
           h("div", { style: "font-family:'Geist Mono',monospace;font-size:21px;font-weight:600;margin-top:6px;letter-spacing:-0.5px;" }, money(acctBal)),
@@ -616,8 +715,22 @@
   function mainColumn() {
     return h("main", { style: "flex:1;display:flex;flex-direction:column;min-width:0;" },
       header(),
+      offlineBanner(),
       rulesBanner(),
-      h("div", { style: "flex:1;overflow-y:auto;padding:28px;" }, state.loadingData ? loadingBody() : viewBody()));
+      h("div", { class: "dc-scroll", style: "flex:1;overflow-y:auto;padding:28px;" }, state.loadingData ? loadingBody() : viewBody()));
+  }
+  function offlineBanner() {
+    if (!state.online) {
+      return h("div", { style: "flex:none;display:flex;align-items:center;gap:10px;padding:10px 28px;background:#FBF1E6;border-bottom:1px solid #F0E0C8;color:#9A6418;" },
+        icon('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;"><path d="M1 1l22 22"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.58 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>'),
+        h("div", { style: "font-size:12.5px;font-weight:600;" }, "Sin conexión — puedes seguir registrando; se sincroniza al volver." + (state.pending ? "  (" + state.pending + " sin sincronizar)" : "")));
+    }
+    if (state.pending) {
+      return h("div", { style: "flex:none;display:flex;align-items:center;gap:10px;padding:10px 28px;background:#EAF0F7;border-bottom:1px solid #D6E2F0;color:#3D6FB0;" },
+        icon('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>'),
+        h("div", { style: "font-size:12.5px;font-weight:600;" }, "Sincronizando " + state.pending + " operación(es) pendientes…"));
+    }
+    return null;
   }
   function rulesBanner() {
     if (state.loadingData) return null;
@@ -639,10 +752,10 @@
   }
 
   function header() {
-    return h("header", { style: "height:62px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 28px;border-bottom:1px solid #ECE7DD;background:rgba(250,248,244,.85);backdrop-filter:blur(8px);" },
+    return h("header", { class: "head", style: "height:62px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 28px;border-bottom:1px solid #ECE7DD;background:rgba(250,248,244,.85);backdrop-filter:blur(8px);" },
       h("div", null, h("div", { style: "font-size:17px;font-weight:600;letter-spacing:-0.3px;" }, TITLES[state.view])),
       h("div", { style: "display:flex;align-items:center;gap:12px;" },
-        h("div", { style: "display:flex;align-items:center;gap:7px;font-size:12.5px;color:#807B72;padding:7px 12px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;" },
+        h("div", { class: "head-date", style: "display:flex;align-items:center;gap:7px;font-size:12.5px;color:#807B72;padding:7px 12px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;" },
           icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4.5" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>'),
           dateRangeLabel()),
         h("button", { title: "Checklist antes de operar", style: "display:flex;align-items:center;gap:7px;background:#fff;border:1px solid #E2DDD3;color:#16181C;font-weight:600;font-size:13px;padding:9px 13px;border-radius:9px;", hoverBg: "#FAF8F4", onClick: openChecklist },
@@ -909,7 +1022,8 @@
             icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>'), "CSV"),
           h("button", { title: "Exportar CSV para impuestos (año + P&L)", onClick: function () { exportTax(ft); }, style: exportBtnStyle(), hoverBg: "#FAF8F4" }, "Tax"),
           h("button", { title: "Copia de seguridad de todos tus datos (JSON)", onClick: exportAll, style: exportBtnStyle(), hoverBg: "#FAF8F4" }, "Backup"))),
-      h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;overflow:hidden;" }, headerRow, bodyRows));
+      h("div", { class: "trades-card", style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;overflow:hidden;" },
+        h("div", { class: "trades-scroll" }, headerRow, bodyRows)));
   }
 
   // ---------- calendario ----------
@@ -1384,6 +1498,17 @@
     state.booting = false;
     if (state.user) loadData(); else render();
   }).catch(function () { state.booting = false; render(); });
+
+  // Connectivity: reflect status and flush queued writes when back online.
+  if (typeof window.addEventListener === "function") {
+    window.addEventListener("online", function () { state.online = true; if (state.user) flushOutbox().then(render); else render(); });
+    window.addEventListener("offline", function () { state.online = false; render(); });
+  }
+
+  // Register the service worker (offline app shell). CSP allows worker-src 'self'.
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () { }); });
+  }
 
   render();
 })();

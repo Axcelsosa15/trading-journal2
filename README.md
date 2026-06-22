@@ -15,6 +15,10 @@ online; everything else works offline).
 - **Diario** — trading-journal entries with mood, daily P&L, and lessons.
 - **Nueva operación** — add-trade modal with live estimated-P&L preview.
 - **Detalle** — per-trade drawer with metrics, notes, and delete.
+- **PWA / offline** — installable on mobile and desktop (web app manifest +
+  service worker). The app shell is cached so it loads with no connection;
+  data is cached locally for offline viewing, and trades/journal entries
+  created offline are queued and synced automatically on reconnect.
 
 All charts are inline SVG. Trades and journal entries **persist in
 `localStorage`** (seeded with sample data on first run), so the journal
