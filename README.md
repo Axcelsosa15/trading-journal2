@@ -55,6 +55,8 @@ offline viewing.
 - `styles.css` — global resets, fonts, and overlay animations.
 - `app.js` — data model, computed metrics, charts, views, and interactions.
 - `sw.js`, `manifest.webmanifest`, `icon-*.png` — PWA (offline app shell + install).
+- CSV import: in **Operaciones → Importar**, map your broker/prop-firm CSV
+  columns (auto-detected) and bulk-import trades; P&L is computed when absent.
 - `tests/` — headless jsdom smoke tests; `tests/run.js` is the runner.
 - `SECURITY.md` — security assessment and remediation guide.
 
