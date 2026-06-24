@@ -530,10 +530,13 @@
         var dir = side === "long" ? 1 : -1, exit = Math.round((entry + dir * movePts) * 10) / 10;
         var hour = 9 + Math.floor(rnd() * 6), min = Math.floor(rnd() * 60);
         var tags = rnd() < 0.5 ? [pick(tagPool)] : (rnd() < 0.4 ? [pick(tagPool), pick(tagPool)] : []);
+        // movePts already carries the win/loss sign, which is correct for both
+        // long and short, so pnl = movePts * pointValue * contracts.
+        var pnl = movePts * pv * contracts;
         trades.push({
           date: day, time: pad(hour) + ":" + pad(min), symbol: sym[0], type: "future", side: side,
           contracts: contracts, entry: entry, exit: exit, setup: pick(SETUPS), emotion: pick(["Tranquilo", "Confiado", "Ansioso", "FOMO"]),
-          rating: 1 + Math.floor(rnd() * 5), note: win ? pick(notesWin) : pick(notesLoss),
+          rating: 1 + Math.floor(rnd() * 5), note: win ? pick(notesWin) : pick(notesLoss), pnl: pnl,
           tags: tags.filter(function (x, i, a) { return a.indexOf(x) === i; }),
           mae: Math.round(rnd() * 8 * pv * contracts), mfe: Math.round(rnd() * 12 * pv * contracts), screenshot_path: null
         });
@@ -555,10 +558,12 @@
     if (!isOnline()) { window.alert("Necesitas conexión para cargar datos de ejemplo."); return; }
     if (!window.confirm("Esto añadirá una cuenta de demostración con operaciones y entradas de diario de ejemplo a tu cuenta. ¿Continuar?")) return;
     state.seeding = true; render();
+    var account = null;
     try {
       var acc = await SB.from("accounts").insert({ name: "Cuenta Demo", kind: "demo", firm: "Demo", balance: 50000, currency: "USD", phase: null, status: "activa", profit_target: null, max_drawdown: null, notes: "Datos de ejemplo generados por Bitácora." }).select().single();
       if (acc.error) throw acc.error;
-      var account = coerceAccount(acc.data), data = buildDemoData();
+      account = coerceAccount(acc.data);
+      var data = buildDemoData();
       var tradeRows = data.trades.map(function (t) { return Object.assign({}, t, { account_id: account.id }); });
       var ins = await SB.from("trades").insert(tradeRows).select(); if (ins.error) throw ins.error;
       var jins = await SB.from("journal").insert(data.journal).select(); if (jins.error) throw jins.error;
@@ -568,8 +573,14 @@
       saveCache(); state.seeding = false; render();
       window.alert("Listo: se añadieron " + tradeRows.length + " operaciones, " + data.journal.length + " entradas de diario y 1 cuenta de demostración.");
     } catch (e) {
+      // Roll back anything already created so we don't leave a half-seeded demo
+      // mixed into the user's real data.
+      if (account) {
+        try { await SB.from("trades").delete().eq("account_id", account.id); } catch (ce) { }
+        try { await SB.from("accounts").delete().eq("id", account.id); } catch (ce2) { }
+      }
       state.seeding = false; render();
-      window.alert("No se pudieron cargar los datos de ejemplo: " + (e.message || e));
+      window.alert("No se pudieron cargar los datos de ejemplo (se revirtieron los cambios parciales): " + (e.message || e));
     }
   }
   async function wipeAllData() {
@@ -581,20 +592,40 @@
     var uid = state.user.id;
     state.wiping = true; render();
     try {
+      // Remove screenshots from storage (best-effort), paging past the 1000-item
+      // listing cap so nothing is left orphaned.
       try {
-        var listed = await SB.storage.from(SHOT_BUCKET).list(uid, { limit: 1000 });
-        if (listed && listed.data && listed.data.length) {
-          await SB.storage.from(SHOT_BUCKET).remove(listed.data.map(function (o) { return uid + "/" + o.name; }));
+        var page = 1000, offset = 0, toRemove = [];
+        while (true) {
+          var listed = await SB.storage.from(SHOT_BUCKET).list(uid, { limit: page, offset: offset });
+          var items = (listed && listed.data) || [];
+          if (!items.length) break;
+          items.forEach(function (o) { toRemove.push(uid + "/" + o.name); });
+          if (items.length < page) break;
+          offset += page;
         }
+        if (toRemove.length) await SB.storage.from(SHOT_BUCKET).remove(toRemove);
       } catch (se) { /* storage cleanup is best-effort */ }
-      var dt = await SB.from("trades").delete().eq("user_id", uid); if (dt.error) throw dt.error;
-      var dj = await SB.from("journal").delete().eq("user_id", uid); if (dj.error) throw dj.error;
-      var da = await SB.from("accounts").delete().eq("user_id", uid); if (da.error) throw da.error;
+      // Attempt all deletes (don't stop at the first error) so we remove as much
+      // as possible, then reconcile.
+      var errs = [];
+      var dt = await SB.from("trades").delete().eq("user_id", uid); if (dt.error) errs.push(dt.error.message);
+      var dj = await SB.from("journal").delete().eq("user_id", uid); if (dj.error) errs.push(dj.error.message);
+      var da = await SB.from("accounts").delete().eq("user_id", uid); if (da.error) errs.push(da.error.message);
+      if (errs.length) {
+        // Partial failure: resync local state from the server so we never show
+        // rows that were actually deleted (or hide rows that survived).
+        state.wiping = false;
+        await loadData();
+        window.alert("No se pudo borrar todo (" + errs.join("; ") + "). Recargué tus datos para mostrar el estado real.");
+        return;
+      }
       state.trades = []; state.journal = []; state.accounts = []; setOutbox([]);
       saveCache(); state.wiping = false; render();
       window.alert("Hecho: se eliminaron todas tus operaciones, cuentas y entradas de diario.");
     } catch (e) {
-      state.wiping = false; render();
+      state.wiping = false;
+      try { await loadData(); } catch (re) { render(); }
       window.alert("No se pudo borrar todo: " + (e.message || e));
     }
   }

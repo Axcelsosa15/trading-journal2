@@ -4,12 +4,12 @@ const fs=require("fs");const {JSDOM}=require("jsdom");const vm=require("vm");
 const dom=new JSDOM(fs.readFileSync("index.html","utf8"),{runScripts:"outside-only",pretendToBeVisual:true,url:"https://example.com/"});
 const {window}=dom; const d=window.document;
 window.confirm=()=>true; window.prompt=()=>"BORRAR"; const alerts=[]; window.alert=(m)=>alerts.push(String(m));
-let idc=0; const inserted={trades:0,journal:0,accounts:0}; const deleted=[];
+let idc=0; const inserted={trades:0,journal:0,accounts:0}; const deleted=[]; const seededTradeRows=[];
 function withIds(rows){return (Array.isArray(rows)?rows:[rows]).map(r=>Object.assign({},r,{id:"id"+(++idc)}));}
 function makeFrom(tbl){
   const b={_mode:"read",_rows:null};
   b.select=()=>b; b.order=()=>b; b.eq=()=>b;
-  b.insert=(rows)=>{b._mode="insert";b._rows=rows;inserted[tbl]+=Array.isArray(rows)?rows.length:1;return b;};
+  b.insert=(rows)=>{b._mode="insert";b._rows=rows;inserted[tbl]+=Array.isArray(rows)?rows.length:1;if(tbl==="trades")(Array.isArray(rows)?rows:[rows]).forEach(r=>seededTradeRows.push(r));return b;};
   b.delete=()=>{b._mode="delete";deleted.push(tbl);return b;};
   b.single=()=>Promise.resolve({data:b._mode==="insert"?withIds(b._rows)[0]:null,error:null});
   b.maybeSingle=()=>Promise.resolve({data:null,error:null});
@@ -35,6 +35,7 @@ setTimeout(()=>{
       console.log("Seed inserted 1 demo account:", inserted.accounts===1);
       console.log("Seed inserted trades (>0):", inserted.trades>0);
       console.log("Seed inserted 8 journal entries:", inserted.journal===8);
+      console.log("Seeded trades all have finite pnl:", seededTradeRows.length>0 && seededTradeRows.every(r=>typeof r.pnl==="number"&&isFinite(r.pnl)));
       console.log("Seed reported success:", alerts.some(a=>/operaciones/.test(a)));
       const wipe=btn("Borrar todos los datos"); if(wipe)wipe.click();
       setTimeout(()=>{
