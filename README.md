@@ -58,6 +58,8 @@ offline viewing.
   patterns from your own trades (best/worst day · setup · emotion · session,
   revenge-trading, cold-streak and overtrading signals, conviction calibration).
 - `sw.js`, `manifest.webmanifest`, `icon-*.png` — PWA (offline app shell + install).
+- Trade screenshots: attach a chart image when adding/editing a trade; stored in
+  a private per-user Supabase Storage bucket and shown via a short-lived signed URL.
 - CSV import: in **Operaciones → Importar**, map your broker/prop-firm CSV
   columns (auto-detected) and bulk-import trades; P&L is computed when absent.
 - `tests/` — headless jsdom smoke tests; `tests/run.js` is the runner.

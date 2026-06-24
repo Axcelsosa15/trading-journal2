@@ -194,7 +194,7 @@
     return Math.round((Number(t.exit) - Number(t.entry)) * PV(t) * Number(t.contracts) * dir);
   }
   function blankDraft() {
-    return { symbol: "MES", type: "future", side: "long", contracts: 1, entry: "", exit: "", date: todayISO(), time: "", setup: "Ruptura", emotion: "Tranquilo", rating: 3, note: "", account_id: "", tags: "", mae: "", mfe: "" };
+    return { symbol: "MES", type: "future", side: "long", contracts: 1, entry: "", exit: "", date: todayISO(), time: "", setup: "Ruptura", emotion: "Tranquilo", rating: 3, note: "", account_id: "", tags: "", mae: "", mfe: "", screenshot_path: "", _imageFile: null };
   }
   function blankAccountDraft() {
     return { name: "", kind: "fondeo", firm: "", balance: "", currency: "USD", phase: "", status: "activa", profit_target: "", max_drawdown: "", notes: "" };
@@ -205,7 +205,7 @@
 
   // ---------- data access (Supabase) ----------
   function coerceTrade(r) {
-    return { id: r.id, date: r.date, time: r.time || "", symbol: r.symbol, type: r.type, side: r.side, contracts: Number(r.contracts), entry: Number(r.entry), exit: Number(r.exit), setup: r.setup, emotion: r.emotion, rating: Number(r.rating), note: r.note || "", pnl: Number(r.pnl), account_id: r.account_id || null, tags: Array.isArray(r.tags) ? r.tags : [], mae: r.mae == null ? "" : Number(r.mae), mfe: r.mfe == null ? "" : Number(r.mfe) };
+    return { id: r.id, date: r.date, time: r.time || "", symbol: r.symbol, type: r.type, side: r.side, contracts: Number(r.contracts), entry: Number(r.entry), exit: Number(r.exit), setup: r.setup, emotion: r.emotion, rating: Number(r.rating), note: r.note || "", pnl: Number(r.pnl), account_id: r.account_id || null, tags: Array.isArray(r.tags) ? r.tags : [], mae: r.mae == null ? "" : Number(r.mae), mfe: r.mfe == null ? "" : Number(r.mfe), screenshot_path: r.screenshot_path || null };
   }
   function parseTags(str) {
     if (Array.isArray(str)) return str;
@@ -642,12 +642,45 @@
     reader.readAsText(file);
   }
 
+  // ---------- trade screenshots (private Supabase Storage) ----------
+  var SHOT_BUCKET = "trade-screenshots";
+  // Upload an image under the user's own folder (RLS scopes access per uid).
+  // Returns the stored object path, or null if it couldn't be uploaded.
+  async function uploadScreenshot(file) {
+    try {
+      if (!file || !state.user || !isOnline()) return null;
+      var ext = (String(file.name || "img").split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5) || "png";
+      var path = state.user.id + "/" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9) + "." + ext;
+      var up = await SB.storage.from(SHOT_BUCKET).upload(path, file, { contentType: file.type || undefined, upsert: false });
+      if (up.error) return null;
+      return path;
+    } catch (e) { return null; }
+  }
+  async function signedShotUrl(path) {
+    try { var r = await SB.storage.from(SHOT_BUCKET).createSignedUrl(path, 3600); return r && r.data ? r.data.signedUrl : null; }
+    catch (e) { return null; }
+  }
+  // An <img> whose source is resolved asynchronously via a short-lived signed URL.
+  function screenshotEl(path) {
+    var img = h("img", { alt: "Captura de la operación", style: "width:100%;border-radius:10px;border:1px solid #ECE7DD;display:block;cursor:zoom-in;background:#FBFAF7;min-height:48px;" });
+    var wrap = h("div", { style: "margin-top:4px;" }, img);
+    signedShotUrl(path).then(function (url) {
+      if (url) { img.src = url; img.addEventListener("click", function () { window.open(url, "_blank", "noopener"); }); }
+      else wrap.appendChild(h("div", { style: "font-size:12px;color:#A39E94;margin-top:6px;" }, "No se pudo cargar la captura."));
+    });
+    return wrap;
+  }
+
   // ---------- mutations ----------
   async function saveTrade() {
     var d = state.draft;
     if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
     var pnl = pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
-    var row = { date: d.date, time: d.time || null, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe) };
+    // Upload a freshly attached screenshot first (online only); otherwise keep
+    // whatever path the trade already had.
+    var shotPath = d.screenshot_path || null;
+    if (d._imageFile) { var p = await uploadScreenshot(d._imageFile); if (p) shotPath = p; }
+    var row = { date: d.date, time: d.time || null, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
     if (state.editId) {
       if (!isOnline()) { window.alert("Necesitas conexión para editar una operación. Las operaciones nuevas sí se guardan sin conexión."); return; }
       var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
@@ -676,7 +709,7 @@
   }
   function openEdit(t) {
     state.editId = t.id;
-    state.draft = { symbol: t.symbol, type: t.type, side: t.side, contracts: t.contracts, entry: t.entry, exit: t.exit, date: t.date, time: t.time || "", setup: t.setup, emotion: t.emotion, rating: t.rating, note: t.note, account_id: t.account_id || "", tags: (t.tags || []).join(", "), mae: t.mae, mfe: t.mfe };
+    state.draft = { symbol: t.symbol, type: t.type, side: t.side, contracts: t.contracts, entry: t.entry, exit: t.exit, date: t.date, time: t.time || "", setup: t.setup, emotion: t.emotion, rating: t.rating, note: t.note, account_id: t.account_id || "", tags: (t.tags || []).join(", "), mae: t.mae, mfe: t.mfe, screenshot_path: t.screenshot_path || "", _imageFile: null };
     state.selectedId = null;
     state.showAdd = true;
     render();
@@ -2266,7 +2299,10 @@
             h("span", { style: "font-size:11px;color:#807B72;" }, "Cuenta"),
             h("span", { style: "font-size:13px;font-weight:600;" }, accountName(st.account_id))) : null,
           h("div", { style: "margin-bottom:8px;font-size:11px;color:#807B72;" }, "Notas"),
-          h("div", { style: "background:#FBFAF7;border:1px solid #ECE7DD;border-radius:11px;padding:15px;font-size:13.5px;line-height:1.6;color:#33312C;" }, note)),
+          h("div", { style: "background:#FBFAF7;border:1px solid #ECE7DD;border-radius:11px;padding:15px;font-size:13.5px;line-height:1.6;color:#33312C;" }, note),
+          st.screenshot_path ? h("div", { style: "margin-top:18px;" },
+            h("div", { style: "margin-bottom:8px;font-size:11px;color:#807B72;" }, "Captura"),
+            screenshotEl(st.screenshot_path)) : null),
         h("div", { style: "padding:16px 22px;border-top:1px solid #ECE7DD;display:flex;gap:10px;" },
           h("button", { style: "flex:1;padding:11px;border-radius:10px;border:none;background:#16181C;color:#fff;font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:center;gap:7px;", onClick: function () { openEdit(st); } },
             icon('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>'), "Editar"),
@@ -2472,6 +2508,16 @@
         field("MAE (excursión adversa)", fieldInput(d, "mae", { type: "number", step: "0.01", placeholder: "opcional", style: inMono })),
         field("MFE (excursión favorable)", fieldInput(d, "mfe", { type: "number", step: "0.01", placeholder: "opcional", style: inMono }))),
       field("Notas", note),
+      (function () {
+        if (!isOnline()) return field("Captura", h("div", { style: "font-size:12.5px;color:#A39E94;padding:10px 12px;border:1px dashed #E2DDD3;border-radius:9px;" }, "Las capturas se suben solo con conexión."));
+        var shotName = d._imageFile ? d._imageFile.name : (d.screenshot_path ? "Captura adjunta · pulsa para reemplazar" : "Adjuntar imagen (opcional)");
+        var shotInput = h("input", { type: "file", accept: "image/*", style: "display:none;", onChange: function (e) { d._imageFile = (e.target.files && e.target.files[0]) || null; renderModal(); } });
+        var picker = h("label", { style: "display:flex;align-items:center;gap:10px;border:1.5px dashed #D8D2C6;border-radius:9px;padding:11px 13px;cursor:pointer;color:#54514A;font-size:13px;background:#FBFAF7;", hoverBg: "#F5F1E8" },
+          icon('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>'),
+          h("span", { style: "min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" }, shotName),
+          d._imageFile ? h("span", { style: "margin-left:auto;color:#16915B;font-weight:700;" }, "✓") : null, shotInput);
+        return field("Captura (opcional)", picker);
+      })(),
       h("div", { style: "display:flex;align-items:center;justify-content:space-between;background:#FBFAF7;border:1px solid #ECE7DD;border-radius:11px;padding:13px 16px;" },
         h("span", { style: "font-size:12.5px;color:#807B72;" }, "P&L estimado"), previewSpan),
     ];
