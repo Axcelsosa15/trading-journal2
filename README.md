@@ -54,6 +54,8 @@ offline viewing.
 - `index.html` — page shell.
 - `styles.css` — global resets, fonts, and overlay animations.
 - `app.js` — data model, computed metrics, charts, views, and interactions.
+- Strategy presets: the **EMA/VWAP (NQ)** system is selectable as a trade *Setup*,
+  and its official pre-trade checklist can be loaded from **Ajustes** with one click.
 - Insights engine: the **Insights** view surfaces deterministic, plain-language
   patterns from your own trades (best/worst day · setup · emotion · session,
   revenge-trading, cold-streak and overtrading signals, conviction calibration).
