@@ -1,11 +1,19 @@
 /* Bitácora service worker — offline app shell.
  *
- * Caches the static shell so the app loads with no connection. Supabase API
- * calls are never cached (the app caches its own data in localStorage and
- * queues writes in an outbox); the SDK and fonts are cached so the shell can
- * boot offline. Bump CACHE to invalidate old assets on deploy.
+ * Strategy:
+ *  - Code (navigations + .html/.js/.css): NETWORK-FIRST. The newest deploy always
+ *    wins when online; the cache is only a fallback for offline. This is what
+ *    keeps users from getting stuck on a stale build.
+ *  - Other same-origin assets (icons, manifest): cache-first with background
+ *    refresh (they change rarely).
+ *  - Cross-origin (Supabase SDK, fonts): cache-first.
+ *  - Supabase API/auth/realtime: never cached.
+ *
+ * The worker activates immediately (skipWaiting + clients.claim) so a new deploy
+ * takes over on the next load instead of waiting behind the old one. Bump CACHE
+ * to purge old asset versions.
  */
-var CACHE = "bitacora-v1";
+var CACHE = "bitacora-v2";
 var SHELL = [
   "./",
   "./index.html",
@@ -21,20 +29,17 @@ var SHELL = [
 self.addEventListener("install", function (e) {
   e.waitUntil(
     caches.open(CACHE).then(function (c) {
-      // addAll is atomic; add tolerantly so one miss doesn't fail install.
+      // Tolerant add so one missing asset doesn't fail the whole install.
       return Promise.all(SHELL.map(function (url) {
         return c.add(url).catch(function () { });
       }));
-    })
-    // Do NOT skipWaiting here: let the new worker wait so the app can prompt the
-    // user ("nueva versión disponible") and activate it on demand.
+    }).then(function () { return self.skipWaiting(); })
   );
 });
 
-// Activate the waiting worker when the page asks (user clicked "Actualizar").
+// Still honour an explicit skipWaiting message (kept for compatibility).
 self.addEventListener("message", function (e) {
   if (!e) return;
-  // Only honour messages from same-origin clients (origin is "" for same-context).
   if (e.origin && e.origin !== self.location.origin) return;
   if (e.data === "skipWaiting") self.skipWaiting();
 });
@@ -47,6 +52,37 @@ self.addEventListener("activate", function (e) {
   );
 });
 
+function networkFirst(req) {
+  return fetch(req).then(function (res) {
+    if (res && res.status === 200) {
+      var copy = res.clone();
+      caches.open(CACHE).then(function (c) { c.put(req, copy); });
+    }
+    return res;
+  }).catch(function () {
+    return caches.open(CACHE).then(function (c) {
+      return c.match(req).then(function (cached) {
+        if (cached) return cached;
+        if (req.mode === "navigate") return c.match("./index.html");
+        return new Response("", { status: 504, statusText: "offline" });
+      });
+    });
+  });
+}
+
+function cacheFirst(req, allowOpaque) {
+  return caches.open(CACHE).then(function (c) {
+    return c.match(req).then(function (cached) {
+      var net = fetch(req).then(function (res) {
+        if (res && (res.status === 200 || (allowOpaque && res.type === "opaque"))) c.put(req, res.clone());
+        return res;
+      }).catch(function () { return null; });
+      if (cached) { net.catch(function () { }); return cached; }
+      return net.then(function (res) { return res || new Response("", { status: 504 }); });
+    });
+  });
+}
+
 self.addEventListener("fetch", function (e) {
   var req = e.request;
   if (req.method !== "GET") return;
@@ -55,40 +91,13 @@ self.addEventListener("fetch", function (e) {
   // Never cache Supabase (auth/data/realtime) — always go to network.
   if (/supabase\.co$/.test(url.hostname)) return;
 
-  var sameOrigin = url.origin === self.location.origin;
-
-  if (sameOrigin) {
-    // Stale-while-revalidate for our own shell assets.
-    e.respondWith(
-      caches.open(CACHE).then(function (c) {
-        return c.match(req).then(function (cached) {
-          var net = fetch(req).then(function (res) {
-            if (res && res.status === 200) c.put(req, res.clone());
-            return res;
-          }).catch(function () { return null; });
-          // For navigations offline, fall back to cached index.html.
-          if (cached) { net.catch(function () { }); return cached; }
-          return net.then(function (res) {
-            if (res) return res;
-            if (req.mode === "navigate") return c.match("./index.html");
-            return new Response("", { status: 504, statusText: "offline" });
-          });
-        });
-      })
-    );
+  if (url.origin === self.location.origin) {
+    // Code must be fresh: navigations and our HTML/JS/CSS go network-first.
+    var isCode = req.mode === "navigate" || /\.(html|js|css)$/.test(url.pathname);
+    e.respondWith(isCode ? networkFirst(req) : cacheFirst(req, false));
     return;
   }
 
-  // Cross-origin (CDN SDK, fonts): cache-first, then network.
-  e.respondWith(
-    caches.open(CACHE).then(function (c) {
-      return c.match(req).then(function (cached) {
-        if (cached) return cached;
-        return fetch(req).then(function (res) {
-          if (res && (res.status === 200 || res.type === "opaque")) c.put(req, res.clone());
-          return res;
-        }).catch(function () { return cached || new Response("", { status: 504 }); });
-      });
-    })
-  );
+  // Cross-origin (CDN SDK, fonts): cache-first.
+  e.respondWith(cacheFirst(req, true));
 });
