@@ -1236,6 +1236,7 @@
         navItem("trades", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="18" r="1.3" fill="currentColor" stroke="none"/></svg>', "Operaciones", state.trades.length),
         navItem("calendar", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4.5" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/></svg>', "Calendario"),
         navItem("analytics", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><line x1="4" y1="20" x2="4" y2="13"/><line x1="10" y1="20" x2="10" y2="5"/><line x1="16" y1="20" x2="16" y2="9"/><line x1="22" y1="20" x2="22" y2="15"/></svg>', "Analítica"),
+        navItem("insights", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V18h6v-1.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg>', "Insights"),
         navItem("stats", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 19h16"/><path d="M4 5v14"/><path d="M8 15l3-4 3 2 4-6"/><circle cx="8" cy="15" r="0.6" fill="currentColor"/></svg>', "Estadísticas"),
         navItem("correlations", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="6" cy="17" r="1.6"/><circle cx="10" cy="11" r="1.6"/><circle cx="14" cy="13" r="1.6"/><circle cx="18" cy="6" r="1.6"/><path d="M4 21V4" stroke-width="1.4"/><path d="M4 21h17" stroke-width="1.4"/></svg>', "Correlaciones"),
         navItem("journal", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v14H6.5A2.5 2.5 0 0 0 4 19.5z"/><line x1="4" y1="19.5" x2="4" y2="5.5"/><line x1="20" y1="17" x2="20" y2="21"/><path d="M6.5 21H20"/></svg>', "Diario"),
@@ -1256,7 +1257,7 @@
     );
   }
 
-  var TITLES = { dashboard: "Resumen", trades: "Operaciones", calendar: "Calendario de resultados", analytics: "Analítica", stats: "Estadísticas avanzadas", correlations: "Correlaciones con tus resultados", journal: "Diario de trading", accounts: "Cuentas", settings: "Ajustes" };
+  var TITLES = { dashboard: "Resumen", trades: "Operaciones", calendar: "Calendario de resultados", analytics: "Analítica", insights: "Insights y patrones", stats: "Estadísticas avanzadas", correlations: "Correlaciones con tus resultados", journal: "Diario de trading", accounts: "Cuentas", settings: "Ajustes" };
 
   function mainColumn() {
     // Fade the body only when switching views (not on in-view re-renders like
@@ -1321,6 +1322,7 @@
       case "trades": return tradesView();
       case "calendar": return calendarView();
       case "analytics": return analyticsView();
+      case "insights": return insightsView();
       case "stats": return statsView();
       case "correlations": return correlationsView();
       case "journal": return journalView();
@@ -1685,6 +1687,109 @@
   }
 
   // ---------- analítica ----------
+  // ---------- insights / pattern engine (deterministic, no external API) ----------
+  var INSIGHTS_MIN = 8;
+  function computeInsights() {
+    var T = state.trades;
+    var out = [];
+    if (T.length < INSIGHTS_MIN) return out;
+    function exp(arr) { return arr.length ? arr.reduce(function (s, t) { return s + t.pnl; }, 0) / arr.length : 0; }
+    function wrPct(g) { return Math.round(g.wins / g.count * 100); }
+    function avg(a) { return a.length ? a.reduce(function (s, x) { return s + x; }, 0) / a.length : 0; }
+    var overall = exp(T);
+    var band = Math.max(20, Math.abs(overall) * 0.5); // significance threshold
+    var WD = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+    var chrono = T.slice().sort(function (a, b) { var d = byDateAsc(a, b); return d || ((a.time || "") < (b.time || "") ? -1 : ((a.time || "") > (b.time || "") ? 1 : 0)); });
+
+    // Best/worst edge across a {key:{key,pnl,count,wins}} grouping.
+    function edge(g, minN, kind, labelFn) {
+      var arr = Object.keys(g).map(function (k) { return g[k]; }).filter(function (x) { return x.count >= minN; });
+      if (arr.length < 2) return;
+      arr.forEach(function (x) { x.exp = x.pnl / x.count; });
+      arr.sort(function (a, b) { return b.exp - a.exp; });
+      var best = arr[0], worst = arr[arr.length - 1];
+      if (best.exp > 0 && best.exp - worst.exp > band) {
+        out.push({ sev: "good", title: kind + ": tu fortaleza es " + labelFn(best.key), detail: "Expectativa " + signed(Math.round(best.exp)) + "/op · " + wrPct(best) + "% acierto en " + best.count + " ops." });
+        if (worst.exp < 0) out.push({ sev: "bad", title: kind + ": flojeas en " + labelFn(worst.key), detail: "Expectativa " + signed(Math.round(worst.exp)) + "/op · " + wrPct(worst) + "% acierto en " + worst.count + " ops. Evita o reduce tamaño aquí." });
+      }
+    }
+    edge(group(function (t) { return t.setup; }), 4, "Setup", function (k) { return k; });
+    edge(group(function (t) { return t.symbol; }), 5, "Símbolo", function (k) { return k; });
+    edge(group(function (t) { return t.emotion; }), 4, "Emoción", function (k) { return "estado " + k; });
+    // Weekday grouping.
+    var wg = {};
+    T.forEach(function (t) { var dow = new Date(t.date + "T12:00:00").getDay(); var k = String(dow); if (!wg[k]) wg[k] = { key: k, pnl: 0, count: 0, wins: 0 }; wg[k].pnl += t.pnl; wg[k].count++; if (t.pnl > 0) wg[k].wins++; });
+    edge(wg, 4, "Día", function (k) { return "el " + WD[+k]; });
+    // Session grouping (only timed trades).
+    var sg = {};
+    T.forEach(function (t) { var s = sessionOf(t.time); if (!s) return; if (!sg[s]) sg[s] = { key: s, pnl: 0, count: 0, wins: 0 }; sg[s].pnl += t.pnl; sg[s].count++; if (t.pnl > 0) sg[s].wins++; });
+    edge(sg, 5, "Sesión", function (k) { return k; });
+
+    // Revenge trading: expectancy of the trade right after a loss.
+    var afterLoss = [];
+    for (var i = 1; i < chrono.length; i++) if (chrono[i - 1].pnl < 0) afterLoss.push(chrono[i]);
+    if (afterLoss.length >= 5) {
+      var eAL = exp(afterLoss);
+      if (eAL < overall - Math.max(15, Math.abs(overall) * 0.3) && eAL < 0)
+        out.push({ sev: "warn", title: "Posible revenge trading", detail: "Tras una operación perdedora tu expectativa cae a " + signed(Math.round(eAL)) + "/op (vs " + signed(Math.round(overall)) + " global) en " + afterLoss.length + " casos. Una pausa tras cada pérdida puede ayudarte." });
+    }
+    // After 2+ consecutive losses.
+    var cons = 0, afterStreak = [];
+    for (var j = 0; j < chrono.length; j++) { if (cons >= 2) afterStreak.push(chrono[j]); if (chrono[j].pnl < 0) cons++; else cons = 0; }
+    if (afterStreak.length >= 4 && exp(afterStreak) < 0)
+      out.push({ sev: "warn", title: "Cuidado con las rachas frías", detail: "Después de 2+ pérdidas seguidas, tus siguientes operaciones promedian " + signed(Math.round(exp(afterStreak))) + "/op (" + afterStreak.length + " casos). Plantéate parar tras dos pérdidas." });
+
+    // Overtrading: high-volume days vs calm days.
+    var byDay = {};
+    T.forEach(function (t) { (byDay[t.date] = byDay[t.date] || []).push(t); });
+    var days = Object.keys(byDay);
+    if (days.length >= 8) {
+      var counts = days.map(function (d) { return byDay[d].length; }).sort(function (a, b) { return a - b; });
+      var med = counts[Math.floor(counts.length / 2)];
+      var hi = [], lo = [];
+      days.forEach(function (d) { var de = byDay[d].reduce(function (s, t) { return s + t.pnl; }, 0) / byDay[d].length; if (byDay[d].length > med) hi.push(de); else lo.push(de); });
+      if (hi.length >= 3 && lo.length >= 3 && avg(hi) < avg(lo) - Math.max(10, Math.abs(overall) * 0.3))
+        out.push({ sev: "warn", title: "Señal de overtrading", detail: "Los días con más operaciones de lo habitual (>" + med + "/día) rinden " + signed(Math.round(avg(hi))) + "/op frente a " + signed(Math.round(avg(lo))) + " en días tranquilos. Menos puede ser más." });
+    }
+    // Conviction calibration: do high-rated trades actually outperform?
+    var hiC = T.filter(function (t) { return t.rating >= 4; }), loC = T.filter(function (t) { return t.rating <= 2; });
+    if (hiC.length >= 4 && loC.length >= 4) {
+      var hE = exp(hiC), lE = exp(loC);
+      if (hE > lE + Math.max(15, Math.abs(overall) * 0.3)) out.push({ sev: "good", title: "Tu lectura de mercado funciona", detail: "Tus operaciones de alta convicción (4–5★) promedian " + signed(Math.round(hE)) + "/op frente a " + signed(Math.round(lE)) + " en las de baja (1–2★)." });
+      else if (hE <= lE) out.push({ sev: "warn", title: "Tu convicción no predice resultados", detail: "Las que marcaste de alta convicción (" + signed(Math.round(hE)) + "/op) no superan a las de baja (" + signed(Math.round(lE)) + "). Revisa qué te da falsa confianza." });
+    }
+    var order = { bad: 0, warn: 1, good: 2, info: 3 };
+    out.sort(function (a, b) { return order[a.sev] - order[b.sev]; });
+    return out;
+  }
+  function insightCard(ins) {
+    var theme = {
+      good: { c: "#16915B", bg: "#E8F3EC", ic: '<path d="M20 6 9 17l-5-5"/>' },
+      bad: { c: "#D6483B", bg: "#FBEAE7", ic: '<circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="16" x2="12" y2="16"/>' },
+      warn: { c: "#C77B2A", bg: "#FBF1E6", ic: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12" y2="17"/>' },
+      info: { c: "#3D6FB0", bg: "#EAF0F7", ic: '<circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="8" x2="12" y2="8"/>' },
+    }[ins.sev] || { c: "#807B72", bg: "#F1EDE5", ic: "" };
+    return h("div", { style: "display:flex;gap:14px;background:#fff;border:1px solid #ECE7DD;border-left:3px solid " + theme.c + ";border-radius:12px;padding:16px 18px;" },
+      h("div", { style: "width:34px;height:34px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;background:" + theme.bg + ";" },
+        icon('<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="' + theme.c + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + theme.ic + '</svg>')),
+      h("div", { style: "min-width:0;" },
+        h("div", { style: "font-size:13.5px;font-weight:600;color:#16181C;margin-bottom:3px;" }, ins.title),
+        h("div", { style: "font-size:12.5px;color:#807B72;line-height:1.5;" }, ins.detail)));
+  }
+  function insightsView() {
+    var wrap = function (kids) { return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:14px;" }, kids); };
+    if (state.trades.length < INSIGHTS_MIN)
+      return wrap(emptyCard("Insights en construcción", "Necesito al menos " + INSIGHTS_MIN + " operaciones para detectar patrones fiables. Llevas " + state.trades.length + ". Sigue registrando y vuelve aquí."));
+    var ins = computeInsights();
+    if (!ins.length)
+      return wrap(emptyCard("Sin patrones destacados todavía", "Tus resultados aún no muestran sesgos fuertes por día, emoción, setup o racha — buena señal de consistencia. Vuelve cuando tengas más operaciones."));
+    var counts = ins.reduce(function (a, i) { a[i.sev] = (a[i.sev] || 0) + 1; return a; }, {});
+    var header = h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px 20px;" },
+      h("div", { style: "font-size:15px;font-weight:600;margin-bottom:4px;" }, "Patrones detectados en tus " + state.trades.length + " operaciones"),
+      h("div", { style: "font-size:12.5px;color:#807B72;" }, "Análisis automático de tus sesgos por día, hora, setup, emoción y comportamiento. " + ((counts.bad || 0) + (counts.warn || 0)) + " a vigilar · " + (counts.good || 0) + " fortaleza(s)."));
+    return wrap([header].concat(ins.map(insightCard)));
+  }
+
   function analyticsView() {
     if (!state.trades.length) {
       return h("div", { style: "max-width:1180px;margin:0 auto;" }, emptyCard("Sin datos para analizar", "Registra operaciones y aquí verás tu curva de capital y tu rendimiento por día, emoción y símbolo."));

@@ -54,6 +54,9 @@ offline viewing.
 - `index.html` — page shell.
 - `styles.css` — global resets, fonts, and overlay animations.
 - `app.js` — data model, computed metrics, charts, views, and interactions.
+- Insights engine: the **Insights** view surfaces deterministic, plain-language
+  patterns from your own trades (best/worst day · setup · emotion · session,
+  revenge-trading, cold-streak and overtrading signals, conviction calibration).
 - `sw.js`, `manifest.webmanifest`, `icon-*.png` — PWA (offline app shell + install).
 - CSV import: in **Operaciones → Importar**, map your broker/prop-firm CSV
   columns (auto-detected) and bulk-import trades; P&L is computed when absent.
