@@ -31,6 +31,15 @@ aplicará cuando existan apps nativas; hoy el cliente móvil es la **PWA**).
 - **Anti-clickjacking** (frame-busting JS) y `referrer: no-referrer`.
 - **Logout seguro:** al cerrar sesión se borran la caché y el outbox del usuario
   en `localStorage`.
+- **Integridad de datos (BD):** constraints `CHECK` en `trades`
+  (`contracts > 0`, `rating 1–5`, `side`/`type` válidos) y `accounts`
+  (`kind`/`status` válidos) — defensa en profundidad además de la validación
+  en cliente. (ASVS V5.1)
+- **Resiliencia:** manejador global de errores (`error` / `unhandledrejection`)
+  y `try/catch` en el render que muestran un aviso con opción de recargar en
+  lugar de dejar la pantalla en blanco.
+- **CI/seguridad:** tests headless que bloquean PRs, **CodeQL** (SAST) y
+  **Dependabot** en cada PR/push.
 
 ## Registro de riesgos
 | ID | Área | Sev. | Estado | Recomendación |

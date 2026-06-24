@@ -50,6 +50,31 @@
     e.addEventListener("mouseleave", function () { e.style.background = base; });
   }
 
+  // Resilience: surface a friendly, non-blocking banner instead of white-screening
+  // when an unexpected error escapes. Appended to <body> so it survives #app rebuilds.
+  function showFatalError() {
+    try {
+      if (!document.body || document.getElementById("fatal-error")) return;
+      var bar = document.createElement("div");
+      bar.id = "fatal-error";
+      bar.setAttribute("role", "alert");
+      bar.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#FCF1EF;border-top:1px solid #F2D9D5;color:#B23A2E;font-family:Geist,sans-serif;font-size:13px;padding:12px 18px;display:flex;align-items:center;gap:12px;box-shadow:0 -4px 20px rgba(0,0,0,.08);";
+      var msg = document.createElement("span");
+      msg.style.cssText = "flex:1;";
+      msg.textContent = "Ha ocurrido un error inesperado. Tus datos están a salvo; si algo se ve raro, recarga la página.";
+      var reload = document.createElement("button");
+      reload.textContent = "Recargar";
+      reload.style.cssText = "background:#16181C;color:#fff;font-weight:600;border-radius:8px;padding:8px 14px;font-size:12.5px;cursor:pointer;border:none;";
+      reload.addEventListener("click", function () { location.reload(); });
+      var close = document.createElement("button");
+      close.textContent = "✕"; close.setAttribute("aria-label", "Cerrar aviso");
+      close.style.cssText = "background:none;border:none;color:#B23A2E;font-size:16px;padding:4px 8px;cursor:pointer;";
+      close.addEventListener("click", function () { bar.remove(); });
+      bar.appendChild(msg); bar.appendChild(reload); bar.appendChild(close);
+      document.body.appendChild(bar);
+    } catch (e) { /* last resort: stay silent */ }
+  }
+
   // ===================================================================
   // State
   // ===================================================================
@@ -906,21 +931,26 @@
   // ===================================================================
   var _scrollView = null, _savedScroll = 0;
   function render() {
-    var root = document.getElementById("app");
-    // Preserve the body scroll position across re-renders within the same view
-    // (so filtering / opening a detail doesn't jump back to the top).
-    var prevScroller = root.querySelector(".dc-scroll");
-    if (prevScroller) _savedScroll = prevScroller.scrollTop;
-    root.innerHTML = "";
-    if (state.booting) { root.appendChild(centerWrap(h("div", { style: "color:#A39E94;font-size:14px;" }, "Cargando…"))); renderModal(); return; }
-    if (!state.user) { root.appendChild(authScreen()); renderModal(); return; }
-    if (!state.mfaChecked) { root.appendChild(centerWrap(h("div", { style: "color:#A39E94;font-size:14px;" }, "Verificando seguridad…"))); renderModal(); return; }
-    if (state.mfaGate) { root.appendChild(mfaGateScreen()); renderModal(); return; }
-    root.appendChild(appShell());
-    var scroller = root.querySelector(".dc-scroll");
-    if (scroller && state.view === _scrollView) scroller.scrollTop = _savedScroll; // same view → keep place; new view → top
-    _scrollView = state.view;
-    renderModal();
+    try {
+      var root = document.getElementById("app");
+      // Preserve the body scroll position across re-renders within the same view
+      // (so filtering / opening a detail doesn't jump back to the top).
+      var prevScroller = root.querySelector(".dc-scroll");
+      if (prevScroller) _savedScroll = prevScroller.scrollTop;
+      root.innerHTML = "";
+      if (state.booting) { root.appendChild(centerWrap(h("div", { style: "color:#A39E94;font-size:14px;" }, "Cargando…"))); renderModal(); return; }
+      if (!state.user) { root.appendChild(authScreen()); renderModal(); return; }
+      if (!state.mfaChecked) { root.appendChild(centerWrap(h("div", { style: "color:#A39E94;font-size:14px;" }, "Verificando seguridad…"))); renderModal(); return; }
+      if (state.mfaGate) { root.appendChild(mfaGateScreen()); renderModal(); return; }
+      root.appendChild(appShell());
+      var scroller = root.querySelector(".dc-scroll");
+      if (scroller && state.view === _scrollView) scroller.scrollTop = _savedScroll; // same view → keep place; new view → top
+      _scrollView = state.view;
+      renderModal();
+    } catch (e) {
+      // Never leave a blank screen on an unexpected render failure.
+      showFatalError();
+    }
   }
   function mfaGateScreen() {
     var input = h("input", { type: "text", inputmode: "numeric", maxlength: "6", autocomplete: "one-time-code", placeholder: "000000", style: "width:100%;text-align:center;letter-spacing:8px;font-family:'Geist Mono',monospace;font-size:24px;padding:12px;border:1px solid #E2DDD3;border-radius:10px;margin-top:6px;", onInput: function (e) { state.mfa.code = e.target.value.replace(/\D/g, ""); } });
@@ -2191,6 +2221,13 @@
     try { window.top.location = window.self.location; } catch (e) { }
     document.body.innerHTML = '<div style="font-family:sans-serif;padding:40px;color:#16181C;">Por seguridad, Bitácora no puede abrirse dentro de otra página.</div>';
     return;
+  }
+
+  // Resilience: catch any uncaught error / rejected promise and show a friendly
+  // banner with a reload action instead of silently breaking the UI.
+  if (typeof window.addEventListener === "function") {
+    window.addEventListener("error", function () { showFatalError(); });
+    window.addEventListener("unhandledrejection", function () { showFatalError(); });
   }
 
   SB.auth.onAuthStateChange(function (event, session) {
