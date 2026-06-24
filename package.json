@@ -1,0 +1,13 @@
+{
+  "name": "bitacora-trading-journal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bitácora — trading journal (static SPA + Supabase). The app itself has no runtime dependencies; jsdom is used only for the headless smoke-test suite.",
+  "scripts": {
+    "check": "node --check app.js && node --check sw.js",
+    "test": "node tests/run.js"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
+}
