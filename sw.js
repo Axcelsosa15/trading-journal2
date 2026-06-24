@@ -25,8 +25,18 @@ self.addEventListener("install", function (e) {
       return Promise.all(SHELL.map(function (url) {
         return c.add(url).catch(function () { });
       }));
-    }).then(function () { return self.skipWaiting(); })
+    })
+    // Do NOT skipWaiting here: let the new worker wait so the app can prompt the
+    // user ("nueva versión disponible") and activate it on demand.
   );
+});
+
+// Activate the waiting worker when the page asks (user clicked "Actualizar").
+self.addEventListener("message", function (e) {
+  if (!e) return;
+  // Only honour messages from same-origin clients (origin is "" for same-context).
+  if (e.origin && e.origin !== self.location.origin) return;
+  if (e.data === "skipWaiting") self.skipWaiting();
 });
 
 self.addEventListener("activate", function (e) {

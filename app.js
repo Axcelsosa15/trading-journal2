@@ -50,29 +50,53 @@
     e.addEventListener("mouseleave", function () { e.style.background = base; });
   }
 
+  // A small fixed banner anchored to <body> (survives #app rebuilds). Used for
+  // resilience errors and the PWA "new version available" prompt.
+  function showBanner(id, opts) {
+    try {
+      if (!document.body || document.getElementById(id)) return;
+      var theme = opts.theme || { bg: "#FCF1EF", border: "#F2D9D5", fg: "#B23A2E" };
+      var bar = document.createElement("div");
+      bar.id = id;
+      bar.setAttribute("role", opts.role || "status");
+      bar.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:9999;background:" + theme.bg + ";border-top:1px solid " + theme.border + ";color:" + theme.fg + ";font-family:Geist,sans-serif;font-size:13px;padding:12px 18px;display:flex;align-items:center;gap:12px;box-shadow:0 -4px 20px rgba(0,0,0,.08);";
+      var msg = document.createElement("span");
+      msg.style.cssText = "flex:1;";
+      msg.textContent = opts.message;
+      bar.appendChild(msg);
+      if (opts.actionText) {
+        var act = document.createElement("button");
+        act.textContent = opts.actionText;
+        act.style.cssText = "background:#16181C;color:#fff;font-weight:600;border-radius:8px;padding:8px 14px;font-size:12.5px;cursor:pointer;border:none;";
+        act.addEventListener("click", function () { try { opts.onAction && opts.onAction(); } catch (e) { } });
+        bar.appendChild(act);
+      }
+      var close = document.createElement("button");
+      close.textContent = "✕"; close.setAttribute("aria-label", "Cerrar aviso");
+      close.style.cssText = "background:none;border:none;color:" + theme.fg + ";font-size:16px;padding:4px 8px;cursor:pointer;";
+      close.addEventListener("click", function () { bar.remove(); });
+      bar.appendChild(close);
+      document.body.appendChild(bar);
+    } catch (e) { /* last resort: stay silent */ }
+  }
+  function showUpdateBanner(reg) {
+    showBanner("update-banner", {
+      role: "status",
+      theme: { bg: "#EAF0F7", border: "#D6E2F0", fg: "#2F5C96" },
+      message: "Hay una nueva versión de Bitácora disponible.",
+      actionText: "Actualizar",
+      onAction: function () { if (reg && reg.waiting) reg.waiting.postMessage("skipWaiting"); },
+    });
+  }
   // Resilience: surface a friendly, non-blocking banner instead of white-screening
   // when an unexpected error escapes. Appended to <body> so it survives #app rebuilds.
   function showFatalError() {
-    try {
-      if (!document.body || document.getElementById("fatal-error")) return;
-      var bar = document.createElement("div");
-      bar.id = "fatal-error";
-      bar.setAttribute("role", "alert");
-      bar.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#FCF1EF;border-top:1px solid #F2D9D5;color:#B23A2E;font-family:Geist,sans-serif;font-size:13px;padding:12px 18px;display:flex;align-items:center;gap:12px;box-shadow:0 -4px 20px rgba(0,0,0,.08);";
-      var msg = document.createElement("span");
-      msg.style.cssText = "flex:1;";
-      msg.textContent = "Ha ocurrido un error inesperado. Tus datos están a salvo; si algo se ve raro, recarga la página.";
-      var reload = document.createElement("button");
-      reload.textContent = "Recargar";
-      reload.style.cssText = "background:#16181C;color:#fff;font-weight:600;border-radius:8px;padding:8px 14px;font-size:12.5px;cursor:pointer;border:none;";
-      reload.addEventListener("click", function () { location.reload(); });
-      var close = document.createElement("button");
-      close.textContent = "✕"; close.setAttribute("aria-label", "Cerrar aviso");
-      close.style.cssText = "background:none;border:none;color:#B23A2E;font-size:16px;padding:4px 8px;cursor:pointer;";
-      close.addEventListener("click", function () { bar.remove(); });
-      bar.appendChild(msg); bar.appendChild(reload); bar.appendChild(close);
-      document.body.appendChild(bar);
-    } catch (e) { /* last resort: stay silent */ }
+    showBanner("fatal-error", {
+      role: "alert",
+      message: "Ha ocurrido un error inesperado. Tus datos están a salvo; si algo se ve raro, recarga la página.",
+      actionText: "Recargar",
+      onAction: function () { location.reload(); },
+    });
   }
 
   // ===================================================================
@@ -118,6 +142,7 @@
     quickNote: "", quickMood: "Enfocado",
     online: (typeof navigator !== "undefined" ? navigator.onLine !== false : true), pending: 0, usingCache: false,
     corrFactor: "rating", corrResult: "expectancy",
+    tradesShown: 150,
     mfaGate: false, mfaChecked: false, mfa: { code: "", busy: false, error: "" },
     showMfa: false, mfaFactors: [], mfaFactorsLoaded: false,
     mfaEnroll: { id: null, qr: "", secret: "", code: "", busy: false, error: "" },
@@ -1381,7 +1406,9 @@
     if (state.fAccount !== "all") ft = ft.filter(function (t) { return (t.account_id || "none") === state.fAccount; });
     if (state.fTag !== "all") ft = ft.filter(function (t) { return (t.tags || []).indexOf(state.fTag) >= 0; });
     ft.sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
-    var tradeRows = ft.map(buildRow);
+    // Render windowing: only build the first N rows to keep large lists smooth.
+    var shown = Math.min(ft.length, state.tradesShown);
+    var tradeRows = ft.slice(0, shown).map(buildRow);
     var symbolOpts = Object.keys(state.trades.reduce(function (acc, t) { acc[t.symbol] = 1; return acc; }, {})).sort();
 
     var fSeg = function (v, label) {
@@ -1424,6 +1451,7 @@
         h("span", { style: "text-align:right;color:#D8B23E;letter-spacing:1px;font-size:12px;" }, row.stars));
     });
     if (ft.length === 0) bodyRows.push(h("div", { style: "padding:48px;text-align:center;color:#A39E94;font-size:13px;" }, state.trades.length === 0 ? "Aún no tienes operaciones. Pulsa “Nueva operación”." : "Sin operaciones para este filtro."));
+    if (ft.length > shown) bodyRows.push(h("button", { style: "display:block;width:100%;text-align:center;padding:14px;border:none;background:#FBFAF7;color:#3D6FB0;font-weight:600;font-size:13px;border-top:1px solid #F3EFE7;", hoverBg: "#F1EDE5", onClick: function () { state.tradesShown += 150; render(); } }, "Ver más (" + (ft.length - shown) + " restantes)"));
 
     return h("div", { style: "max-width:1180px;margin:0 auto;" },
       h("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px;flex-wrap:wrap;" },
@@ -2255,9 +2283,27 @@
     window.addEventListener("offline", function () { state.online = false; render(); });
   }
 
-  // Register the service worker (offline app shell). CSP allows worker-src 'self'.
+  // Register the service worker (offline app shell) and prompt on new versions.
   if ("serviceWorker" in navigator) {
-    window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () { }); });
+    var _reloading = false;
+    navigator.serviceWorker.addEventListener("controllerchange", function () {
+      if (_reloading) return; _reloading = true; location.reload();
+    });
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("sw.js").then(function (reg) {
+        if (!reg) return;
+        // A worker is already waiting (update downloaded on a previous visit).
+        if (reg.waiting && navigator.serviceWorker.controller) showUpdateBanner(reg);
+        reg.addEventListener("updatefound", function () {
+          var nw = reg.installing;
+          if (!nw) return;
+          nw.addEventListener("statechange", function () {
+            // Installed + an existing controller => it's an update, not first install.
+            if (nw.state === "installed" && navigator.serviceWorker.controller) showUpdateBanner(reg);
+          });
+        });
+      }).catch(function () { });
+    });
   }
 
   render();
