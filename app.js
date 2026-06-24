@@ -508,6 +508,128 @@
     downloadText("bitacora-impuestos-" + todayISO() + ".csv", "﻿" + lines.join("\r\n"), "text/csv");
   }
 
+  // ---------- demo data + danger zone ----------
+  // Small deterministic PRNG so the sample set is realistic but reproducible.
+  function demoRng(seed) { return function () { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }; }
+  function buildDemoData() {
+    var rnd = demoRng(20260624);
+    function pick(a) { return a[Math.floor(rnd() * a.length) % a.length]; }
+    var symbols = [["MES", 5], ["MNQ", 2], ["MES", 5], ["M2K", 5], ["MGC", 10]];
+    var tagPool = ["disciplina", "plan", "fomo", "revenge", "noticias", "apertura", "tendencia", "rango"];
+    var notesWin = ["Seguí el plan, entré en pullback claro.", "Esperé confirmación de volumen.", "Dejé correr hasta TP2.", "Buena gestión de riesgo."];
+    var notesLoss = ["Entré tarde, perseguí el precio.", "Rompí mi regla de stop.", "Operé en rango sin claridad.", "FOMO tras una vela fuerte."];
+    var trades = [], days = [], d = new Date();
+    while (days.length < 22) { var dow = d.getDay(); if (dow !== 0 && dow !== 6) days.push(d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate())); d = new Date(d.getTime() - 86400000); }
+    days.reverse();
+    days.forEach(function (day) {
+      var n = 1 + Math.floor(rnd() * 4);
+      for (var k = 0; k < n; k++) {
+        var sym = pick(symbols), pv = sym[1], side = rnd() < 0.6 ? "long" : "short";
+        var win = rnd() < 0.55, movePts = (win ? 1 : -1) * (2 + Math.round(rnd() * 18));
+        var contracts = 1 + Math.floor(rnd() * 3), entry = 100 + Math.round(rnd() * 9000) / 10;
+        var dir = side === "long" ? 1 : -1, exit = Math.round((entry + dir * movePts) * 10) / 10;
+        var hour = 9 + Math.floor(rnd() * 6), min = Math.floor(rnd() * 60);
+        var tags = rnd() < 0.5 ? [pick(tagPool)] : (rnd() < 0.4 ? [pick(tagPool), pick(tagPool)] : []);
+        // movePts already carries the win/loss sign, which is correct for both
+        // long and short, so pnl = movePts * pointValue * contracts.
+        var pnl = movePts * pv * contracts;
+        trades.push({
+          date: day, time: pad(hour) + ":" + pad(min), symbol: sym[0], type: "future", side: side,
+          contracts: contracts, entry: entry, exit: exit, setup: pick(SETUPS), emotion: pick(["Tranquilo", "Confiado", "Ansioso", "FOMO"]),
+          rating: 1 + Math.floor(rnd() * 5), note: win ? pick(notesWin) : pick(notesLoss), pnl: pnl,
+          tags: tags.filter(function (x, i, a) { return a.indexOf(x) === i; }),
+          mae: Math.round(rnd() * 8 * pv * contracts), mfe: Math.round(rnd() * 12 * pv * contracts), screenshot_path: null
+        });
+      }
+    });
+    var journal = [];
+    for (var ji = 0; ji < 8; ji++) {
+      journal.push({
+        date: pick(days), mood: pick(["Disciplinado", "Enfocado", "Paciente", "Neutral", "Frustrado", "Codicioso"]),
+        title: pick(["Sesión sólida", "Día de aprendizaje", "Mantuve la calma", "Sobreoperé", "Buen control de riesgo", "Revisión semanal"]),
+        body: pick(["Respeté el plan y los niveles.", "Me dejé llevar por una racha.", "Reduje tamaño tras dos pérdidas.", "Esperé los setups A+."]),
+        lesson: pick(["Menos es más.", "El stop es sagrado.", "No operar en rango.", "Confiar en el proceso."])
+      });
+    }
+    return { trades: trades, journal: journal };
+  }
+  async function seedDemoData() {
+    if (!state.user) return;
+    if (!isOnline()) { window.alert("Necesitas conexión para cargar datos de ejemplo."); return; }
+    if (!window.confirm("Esto añadirá una cuenta de demostración con operaciones y entradas de diario de ejemplo a tu cuenta. ¿Continuar?")) return;
+    state.seeding = true; render();
+    var account = null;
+    try {
+      var acc = await SB.from("accounts").insert({ name: "Cuenta Demo", kind: "demo", firm: "Demo", balance: 50000, currency: "USD", phase: null, status: "activa", profit_target: null, max_drawdown: null, notes: "Datos de ejemplo generados por Bitácora." }).select().single();
+      if (acc.error) throw acc.error;
+      account = coerceAccount(acc.data);
+      var data = buildDemoData();
+      var tradeRows = data.trades.map(function (t) { return Object.assign({}, t, { account_id: account.id }); });
+      var ins = await SB.from("trades").insert(tradeRows).select(); if (ins.error) throw ins.error;
+      var jins = await SB.from("journal").insert(data.journal).select(); if (jins.error) throw jins.error;
+      state.accounts = [account].concat(state.accounts);
+      state.trades = (ins.data || []).map(coerceTrade).concat(state.trades);
+      state.journal = (jins.data || []).map(coerceJournal).concat(state.journal);
+      saveCache(); state.seeding = false; render();
+      window.alert("Listo: se añadieron " + tradeRows.length + " operaciones, " + data.journal.length + " entradas de diario y 1 cuenta de demostración.");
+    } catch (e) {
+      // Roll back anything already created so we don't leave a half-seeded demo
+      // mixed into the user's real data.
+      if (account) {
+        try { await SB.from("trades").delete().eq("account_id", account.id); } catch (ce) { }
+        try { await SB.from("accounts").delete().eq("id", account.id); } catch (ce2) { }
+      }
+      state.seeding = false; render();
+      window.alert("No se pudieron cargar los datos de ejemplo (se revirtieron los cambios parciales): " + (e.message || e));
+    }
+  }
+  async function wipeAllData() {
+    if (!state.user) return;
+    if (!isOnline()) { window.alert("Necesitas conexión para borrar tus datos."); return; }
+    var ans = window.prompt("Esto eliminará TODAS tus operaciones, cuentas y entradas de diario de forma permanente. Tu cuenta de usuario seguirá existiendo.\n\nEscribe BORRAR para confirmar:");
+    if (ans == null) return;
+    if (String(ans).trim().toUpperCase() !== "BORRAR") { window.alert("Cancelado: no se escribió BORRAR."); return; }
+    var uid = state.user.id;
+    state.wiping = true; render();
+    try {
+      // Remove screenshots from storage (best-effort), paging past the 1000-item
+      // listing cap so nothing is left orphaned.
+      try {
+        var page = 1000, offset = 0, toRemove = [];
+        while (true) {
+          var listed = await SB.storage.from(SHOT_BUCKET).list(uid, { limit: page, offset: offset });
+          var items = (listed && listed.data) || [];
+          if (!items.length) break;
+          items.forEach(function (o) { toRemove.push(uid + "/" + o.name); });
+          if (items.length < page) break;
+          offset += page;
+        }
+        if (toRemove.length) await SB.storage.from(SHOT_BUCKET).remove(toRemove);
+      } catch (se) { /* storage cleanup is best-effort */ }
+      // Attempt all deletes (don't stop at the first error) so we remove as much
+      // as possible, then reconcile.
+      var errs = [];
+      var dt = await SB.from("trades").delete().eq("user_id", uid); if (dt.error) errs.push(dt.error.message);
+      var dj = await SB.from("journal").delete().eq("user_id", uid); if (dj.error) errs.push(dj.error.message);
+      var da = await SB.from("accounts").delete().eq("user_id", uid); if (da.error) errs.push(da.error.message);
+      if (errs.length) {
+        // Partial failure: resync local state from the server so we never show
+        // rows that were actually deleted (or hide rows that survived).
+        state.wiping = false;
+        await loadData();
+        window.alert("No se pudo borrar todo (" + errs.join("; ") + "). Recargué tus datos para mostrar el estado real.");
+        return;
+      }
+      state.trades = []; state.journal = []; state.accounts = []; setOutbox([]);
+      saveCache(); state.wiping = false; render();
+      window.alert("Hecho: se eliminaron todas tus operaciones, cuentas y entradas de diario.");
+    } catch (e) {
+      state.wiping = false;
+      try { await loadData(); } catch (re) { render(); }
+      window.alert("No se pudo borrar todo: " + (e.message || e));
+    }
+  }
+
   // ---------- CSV import ----------
   // Minimal RFC-4180-ish parser: handles quotes, escaped quotes, commas/newlines
   // inside quoted fields, CRLF, and a leading BOM. Returns an array of rows.
@@ -2308,7 +2430,15 @@
           h("div", { style: "font-size:15px;font-weight:600;margin-bottom:3px;" }, "Seguridad · Verificación en dos pasos (2FA)"),
           h("div", { style: "font-size:12.5px;color:#A39E94;max-width:520px;" }, "Añade un código de tu app de autenticación (TOTP) al iniciar sesión. Requiere tener MFA activado en el proyecto de Supabase.")),
         h("button", { style: "background:#16181C;color:#fff;font-weight:600;font-size:13.5px;padding:11px 18px;border-radius:10px;flex:none;", onClick: openMfa },
-          icon('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:6px;"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'), "Gestionar 2FA")));
+          icon('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:6px;"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'), "Gestionar 2FA")),
+      h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:22px;" },
+        h("div", { style: "font-size:15px;font-weight:600;margin-bottom:3px;" }, "Datos · ejemplo y limpieza"),
+        h("div", { style: "font-size:12.5px;color:#A39E94;margin-bottom:16px;max-width:560px;" }, "Carga un conjunto de operaciones de ejemplo para explorar la app, o borra todos tus datos para empezar de cero. Borrar no elimina tu cuenta de usuario."),
+        h("div", { style: "display:flex;gap:12px;flex-wrap:wrap;" },
+          h("button", { onClick: seedDemoData, disabled: !!state.seeding, style: "background:#fff;border:1px solid #E2DDD3;font-weight:600;font-size:13.5px;padding:11px 18px;border-radius:10px;" + (state.seeding ? "opacity:.6;cursor:wait;" : ""), hoverBg: "#FAF8F4" },
+            icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:6px;"><path d="M12 5v14M5 12h14"/></svg>'), state.seeding ? "Cargando…" : "Cargar datos de ejemplo"),
+          h("button", { onClick: wipeAllData, disabled: !!state.wiping, style: "background:#FCF1EF;border:1px solid #F2D9D5;color:#D6483B;font-weight:600;font-size:13.5px;padding:11px 18px;border-radius:10px;" + (state.wiping ? "opacity:.6;cursor:wait;" : ""), hoverBg: "#FBEAE7" },
+            icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:6px;"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>'), state.wiping ? "Borrando…" : "Borrar todos los datos"))));
   }
 
   // ---------- detail drawer ----------
