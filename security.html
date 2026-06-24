@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="index,follow">
+  <link rel="canonical" href="https://bitacora.pages.dev/security.html">
+  <title>Seguridad · Bitácora</title>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;background:#FAF8F4;color:#16181C;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.65;font-size:16px}
+    .wrap{max-width:760px;margin:0 auto;padding:8px 22px 80px}
+    header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 0;border-bottom:1px solid #ECE7DD;margin-bottom:26px}
+    .brand{display:flex;align-items:center;gap:10px;font-weight:700;text-decoration:none;color:#16181C}
+    a{color:#2F5C96}
+    h1{font-size:28px;letter-spacing:-.5px;margin:.1em 0}
+    h2{font-size:18px;margin:1.8em 0 .4em}
+    .muted{color:#807B72;font-size:14px}
+    .back{font-size:14px;text-decoration:none;color:#807B72;border:1px solid #ECE7DD;padding:7px 12px;border-radius:9px;flex:none}
+    ul{padding-left:20px}
+    .card{background:#fff;border:1px solid #ECE7DD;border-radius:12px;padding:16px 18px;margin-top:8px}
+    footer{margin-top:48px;padding-top:18px;border-top:1px solid #ECE7DD;font-size:13px;color:#807B72;display:flex;gap:14px;flex-wrap:wrap}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="/index.html">
+        <svg width="26" height="26" viewBox="0 0 24 24"><rect width="24" height="24" rx="5" fill="#16181C"/><rect x="4" y="9" width="3.4" height="11" rx="1" fill="#16915B"/><rect x="13" y="6" width="3.4" height="9" rx="1" fill="#D6483B"/></svg>
+        Bitácora
+      </a>
+      <a class="back" href="/index.html">Volver a la app</a>
+    </header>
+
+    <h1>Seguridad</h1>
+    <p class="muted">Cómo protegemos tu cuenta y tus datos.</p>
+
+    <h2>Medidas en marcha</h2>
+    <ul>
+      <li><strong>Aislamiento por usuario:</strong> reglas de seguridad a nivel de fila (RLS) en todas las tablas — cada quien solo accede a sus propios datos.</li>
+      <li><strong>Capturas privadas:</strong> almacenamiento en un bucket privado con acceso por usuario y URLs firmadas de corta duración.</li>
+      <li><strong>2FA (TOTP):</strong> verificación en dos pasos opcional al iniciar sesión.</li>
+      <li><strong>Defensa en el navegador:</strong> Content-Security-Policy estricta, sin scripts en línea, protección anti-clickjacking y <code>referrer: no-referrer</code>.</li>
+      <li><strong>Integridad de datos:</strong> restricciones a nivel de base de datos además de la validación en cliente.</li>
+      <li><strong>Cierre de sesión seguro:</strong> se borran la caché y la cola locales del dispositivo.</li>
+      <li><strong>Cadena de desarrollo:</strong> tests automatizados, análisis estático (CodeQL) y actualizaciones de dependencias (Dependabot) bloquean cada cambio.</li>
+    </ul>
+
+    <h2>Reportar una vulnerabilidad</h2>
+    <div class="card">
+      <p style="margin:.2em 0">Si encuentras un problema de seguridad, escríbenos en privado a <a href="mailto:axcelsosa11@gmail.com">axcelsosa11@gmail.com</a>. Agradecemos la divulgación responsable y te pedimos no publicarla hasta que esté resuelta.</p>
+      <p style="margin:.6em 0 0" class="muted">Contacto legible por máquinas: <a href="/.well-known/security.txt">/.well-known/security.txt</a></p>
+    </div>
+
+    <h2>Tu parte</h2>
+    <ul>
+      <li>Usa una contraseña única y activa la 2FA.</li>
+      <li>Cierra sesión en dispositivos compartidos.</li>
+      <li>Exporta copias de seguridad de tus datos periódicamente (Operaciones → Backup).</li>
+    </ul>
+
+    <footer>
+      <a href="/privacy.html">Privacidad</a>
+      <a href="/terms.html">Términos</a>
+      <a href="/cookies.html">Cookies</a>
+      <a href="/security.html">Seguridad</a>
+      <a href="/index.html">Volver a la app</a>
+    </footer>
+  </div>
+</body>
+</html>
