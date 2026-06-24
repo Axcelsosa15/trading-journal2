@@ -269,17 +269,38 @@
     state.pending = getOutbox().length;
     return true;
   }
+  // Fetch every row for a table, paginating past PostgREST's default 1000-row
+  // cap so large histories load completely. Falls back to a single request when
+  // the client lacks .range (e.g. the headless test mocks).
+  async function fetchAll(table, applyOrder) {
+    var probe = applyOrder(SB.from(table).select("*"));
+    if (!probe || typeof probe.range !== "function") {
+      var single = await probe;
+      if (single.error) throw single.error;
+      return single.data || [];
+    }
+    var PAGE = 1000, from = 0, all = [];
+    while (true) {
+      var res = await applyOrder(SB.from(table).select("*")).range(from, from + PAGE - 1);
+      if (res.error) throw res.error;
+      var rows = res.data || [];
+      all = all.concat(rows);
+      if (rows.length < PAGE) break;
+      from += PAGE;
+    }
+    return all;
+  }
+  function byDateThenCreated(q) { return q.order("date", { ascending: false }).order("created_at", { ascending: false }); }
   async function loadData() {
     state.loadingData = true; state.online = isOnline(); render();
     try {
-      var t = await SB.from("trades").select("*").order("date", { ascending: false }).order("created_at", { ascending: false });
-      if (t.error) throw t.error;
-      var j = await SB.from("journal").select("*").order("date", { ascending: false }).order("created_at", { ascending: false });
-      var a = await SB.from("accounts").select("*").order("created_at", { ascending: false });
+      var trades = await fetchAll("trades", byDateThenCreated);
+      var journal = await fetchAll("journal", byDateThenCreated);
+      var accounts = await fetchAll("accounts", function (q) { return q.order("created_at", { ascending: false }); });
       var st = await SB.from("user_settings").select("data").maybeSingle();
-      state.trades = (t.data || []).map(coerceTrade);
-      state.journal = (j.data || []).map(coerceJournal);
-      state.accounts = (a.data || []).map(coerceAccount);
+      state.trades = trades.map(coerceTrade);
+      state.journal = journal.map(coerceJournal);
+      state.accounts = accounts.map(coerceAccount);
       applySettings(st && st.data ? st.data.data : null);
       state.usingCache = false;
       saveCache();
