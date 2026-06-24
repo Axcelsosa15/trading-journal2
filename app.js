@@ -108,6 +108,17 @@
     "¿El ratio riesgo/beneficio es al menos 1.5?",
     "¿Estoy operando con calma, sin FOMO ni revancha?",
   ];
+  // Trade setups offered across the app (add modal + filters). Free text in the DB.
+  var SETUPS = ["Ruptura", "Reversión", "Pullback", "EMA/VWAP"];
+  // Official pre-trade checklist for the NQ EMA/VWAP system (research protocol v1.0).
+  var EMA_VWAP_CHECKLIST = [
+    "¿Precio del lado correcto de la EMA200 (a favor de la tendencia)?",
+    "¿Estructura de EMAs alineada (20 › 55 › 200 en largo; inverso en corto)?",
+    "¿Precio del lado correcto del VWAP?",
+    "¿Pullback que toca la EMA20 o la EMA55?",
+    "¿Volumen actual por encima de la media de las últimas 20 velas?",
+    "¿Cruce de la EMA3 sobre/bajo la EMA10 como gatillo de entrada?",
+  ];
   function defaultSettings() {
     return { rules: { maxTradesPerDay: "", maxDailyLoss: "", maxWeeklyLoss: "" }, checklist: DEFAULT_CHECKLIST.slice(), onboardingDone: false };
   }
@@ -1620,7 +1631,7 @@
       [h("option", { value: "all" }, "Todos los símbolos")].concat(symbolOpts.map(function (sy) { return h("option", { value: sy }, sy); })));
     symbolSelect.value = state.fSymbol;
     var setupSelect = h("select", { style: "font-size:12.5px;padding:8px 11px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;", onChange: function (ev) { state.fSetup = ev.target.value; render(); } },
-      h("option", { value: "all" }, "Todos los setups"), h("option", { value: "Ruptura" }, "Ruptura"), h("option", { value: "Reversión" }, "Reversión"), h("option", { value: "Pullback" }, "Pullback"));
+      [h("option", { value: "all" }, "Todos los setups")].concat(SETUPS.map(function (x) { return h("option", { value: x }, x); })));
     setupSelect.value = state.fSetup;
     var accountSelect = null;
     if (state.accounts.length) {
@@ -2215,6 +2226,14 @@
   }
 
   // ---------- ajustes ----------
+  // Append the EMA/VWAP system's pre-trade checks to the user's checklist (dedup).
+  function loadStrategyChecklist() {
+    var cur = (state.settings.checklist || []).slice();
+    EMA_VWAP_CHECKLIST.forEach(function (q) { if (cur.indexOf(q) < 0) cur.push(q); });
+    state.settings.checklist = cur;
+    state.settingsSaved = false;
+    render();
+  }
   function settingsView() {
     var s = state.settings;
     var inBase = "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;width:100%;";
@@ -2246,6 +2265,17 @@
       h("div", { style: "display:flex;align-items:center;gap:14px;" },
         saveBtn,
         state.settingsSaved ? h("span", { style: "font-size:12.5px;color:#16915B;font-weight:600;" }, "✓ Ajustes guardados") : null),
+      h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:22px;" },
+        h("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:3px;" },
+          icon('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3D6FB0" stroke-width="2"><path d="M4 19V6m0 0 4 3 4-6 4 9 4-3v10"/></svg>'),
+          h("div", { style: "font-size:15px;font-weight:600;" }, "Sistema NQ · EMA/VWAP")),
+        h("div", { style: "font-size:12.5px;color:#A39E94;margin-bottom:12px;max-width:560px;" }, "Setup mecánico EMA 3/10/20/55/200 + VWAP + Volumen para NQ. Disponible como “EMA/VWAP” en el Setup de cada operación; agrupa su rendimiento en Analítica e Insights."),
+        h("ul", { style: "font-size:12.5px;color:#54514A;line-height:1.7;margin:0 0 16px;padding-left:18px;" },
+          h("li", null, "Dirección por EMA200 · estructura 20 › 55 › 200 · precio del lado correcto del VWAP."),
+          h("li", null, "Entrada: pullback a EMA20/55 + volumen > SMA20 + cruce EMA3/EMA10."),
+          h("li", null, "Stop: mín./máx. de las últimas 5 velas · TP1 1R (50%) · TP2 2R (50%) · todo medido en R.")),
+        h("button", { style: "background:#fff;border:1px solid #E2DDD3;font-weight:600;font-size:13px;padding:10px 16px;border-radius:9px;", hoverBg: "#FAF8F4", onClick: loadStrategyChecklist },
+          icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:6px;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'), "Añadir checklist del sistema EMA/VWAP")),
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:22px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;" },
         h("div", null,
           h("div", { style: "font-size:15px;font-weight:600;margin-bottom:3px;" }, "Seguridad · Verificación en dos pasos (2FA)"),
@@ -2499,7 +2529,7 @@
         field("Entrada", fieldInput(d, "entry", { type: "number", step: "0.01", placeholder: "0.00", style: inMono, onInput: function (e) { d.entry = e.target.value; refresh(); } })),
         field("Salida", fieldInput(d, "exit", { type: "number", step: "0.01", placeholder: "0.00", style: inMono, onInput: function (e) { d.exit = e.target.value; refresh(); } }))),
       h("div", { style: "display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;" },
-        field("Setup", fieldSelect(d, "setup", [["Ruptura", "Ruptura"], ["Reversión", "Reversión"], ["Pullback", "Pullback"]])),
+        field("Setup", fieldSelect(d, "setup", SETUPS.map(function (x) { return [x, x]; }))),
         field("Emoción", fieldSelect(d, "emotion", [["Tranquilo", "Tranquilo"], ["Confiado", "Confiado"], ["Ansioso", "Ansioso"], ["FOMO", "FOMO"]])),
         field("Valoración", fieldSelect(d, "rating", [["1", "★"], ["2", "★★"], ["3", "★★★"], ["4", "★★★★"], ["5", "★★★★★"]]))),
       field("Cuenta", fieldSelect(d, "account_id", [["", "Sin cuenta"]].concat(state.accounts.map(function (a) { return [a.id, a.name + " · " + (KIND_LABEL[a.kind] || a.kind)]; })))),
