@@ -781,6 +781,30 @@
     });
     return s("svg", { viewBox: "0 0 " + w + " " + h, style: "width:100%;height:auto;display:block;" }, kids);
   }
+  // Donut/ring chart with a centered label.
+  function donutEl(segments, centerLabel, centerSub) {
+    var total = segments.reduce(function (a, sg) { return a + Math.max(0, sg.value); }, 0);
+    var size = 168, r = 60, cx = size / 2, cy = size / 2, sw = 20, C = 2 * Math.PI * r;
+    var kids = [s("circle", { cx: cx, cy: cy, r: r, fill: "none", stroke: "#F1EDE5", "stroke-width": sw })];
+    if (total > 0) {
+      var off = 0;
+      segments.forEach(function (sg) {
+        if (sg.value <= 0) return;
+        var len = sg.value / total * C;
+        kids.push(s("circle", { cx: cx, cy: cy, r: r, fill: "none", stroke: sg.color, "stroke-width": sw, "stroke-dasharray": len.toFixed(2) + " " + (C - len).toFixed(2), "stroke-dashoffset": (-off).toFixed(2), transform: "rotate(-90 " + cx + " " + cy + ")" }));
+        off += len;
+      });
+    }
+    kids.push(s("text", { x: cx, y: cy - 1, "text-anchor": "middle", "font-size": 25, "font-family": "Geist Mono, monospace", "font-weight": 600, fill: "#16181C" }, centerLabel));
+    if (centerSub) kids.push(s("text", { x: cx, y: cy + 19, "text-anchor": "middle", "font-size": 11, "font-family": "Geist, sans-serif", fill: "#807B72" }, centerSub));
+    return s("svg", { viewBox: "0 0 " + size + " " + size, style: "width:100%;height:auto;display:block;max-width:168px;margin:0 auto;" }, kids);
+  }
+  // Net P&L grouped by calendar month (last 12 with activity).
+  function monthlyData() {
+    var g = {};
+    state.trades.forEach(function (t) { var k = t.date.slice(0, 7); g[k] = (g[k] || 0) + t.pnl; });
+    return Object.keys(g).sort().slice(-12).map(function (k) { return { label: MES[parseInt(k.slice(5, 7), 10) - 1], value: g[k] }; });
+  }
   // Underwater (drawdown) curve: distance below the running equity peak.
   function drawdownEl() {
     var chrono = state.trades.slice().sort(byDateAsc);
@@ -880,14 +904,22 @@
   // ===================================================================
   // Render entry
   // ===================================================================
+  var _scrollView = null, _savedScroll = 0;
   function render() {
     var root = document.getElementById("app");
+    // Preserve the body scroll position across re-renders within the same view
+    // (so filtering / opening a detail doesn't jump back to the top).
+    var prevScroller = root.querySelector(".dc-scroll");
+    if (prevScroller) _savedScroll = prevScroller.scrollTop;
     root.innerHTML = "";
     if (state.booting) { root.appendChild(centerWrap(h("div", { style: "color:#A39E94;font-size:14px;" }, "Cargando…"))); renderModal(); return; }
     if (!state.user) { root.appendChild(authScreen()); renderModal(); return; }
     if (!state.mfaChecked) { root.appendChild(centerWrap(h("div", { style: "color:#A39E94;font-size:14px;" }, "Verificando seguridad…"))); renderModal(); return; }
     if (state.mfaGate) { root.appendChild(mfaGateScreen()); renderModal(); return; }
     root.appendChild(appShell());
+    var scroller = root.querySelector(".dc-scroll");
+    if (scroller && state.view === _scrollView) scroller.scrollTop = _savedScroll; // same view → keep place; new view → top
+    _scrollView = state.view;
     renderModal();
   }
   function mfaGateScreen() {
@@ -1005,11 +1037,14 @@
   var TITLES = { dashboard: "Resumen", trades: "Operaciones", calendar: "Calendario de resultados", analytics: "Analítica", stats: "Estadísticas avanzadas", correlations: "Correlaciones con tus resultados", journal: "Diario de trading", accounts: "Cuentas", settings: "Ajustes" };
 
   function mainColumn() {
+    // Fade the body only when switching views (not on in-view re-renders like
+    // filtering), so the transition feels intentional and never flickers.
+    var fade = state.view !== _scrollView ? " view-fade" : "";
     return h("main", { style: "flex:1;display:flex;flex-direction:column;min-width:0;" },
       header(),
       offlineBanner(),
       rulesBanner(),
-      h("div", { class: "dc-scroll", style: "flex:1;overflow-y:auto;padding:28px;" }, state.loadingData ? loadingBody() : viewBody()));
+      h("div", { class: "dc-scroll" + fade, style: "flex:1;overflow-y:auto;padding:28px;" }, state.loadingData ? loadingBody() : viewBody()));
   }
   function offlineBanner() {
     if (!state.online) {
@@ -1134,6 +1169,25 @@
     kids.push(h("div", { style: "font-size:11.5px;color:#A39E94;margin-top:6px;" }, sub));
     return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;" }, kids);
   }
+  function miniKpi(label, value, valueStyle, sub) {
+    return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:13px;padding:13px 15px;" },
+      h("div", { style: "font-size:11px;color:#807B72;font-weight:500;" }, label),
+      h("div", { style: "font-family:'Geist Mono',monospace;font-size:18px;font-weight:600;letter-spacing:-0.4px;margin-top:5px;" + (valueStyle || "") }, value),
+      sub ? h("div", { style: "font-size:10.5px;color:#A39E94;margin-top:3px;" }, sub) : null);
+  }
+  function donutCard(title, sub, donut, legend) {
+    return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;display:flex;flex-direction:column;" },
+      h("div", { style: "font-size:14px;font-weight:600;" }, title),
+      h("div", { style: "font-size:12px;color:#A39E94;margin-bottom:10px;" }, sub),
+      h("div", { style: "flex:1;display:flex;align-items:center;justify-content:center;padding:6px 0 12px;" }, donut),
+      h("div", { style: "display:flex;flex-direction:column;gap:6px;" }, legend));
+  }
+  function legendRow(color, label, value, valueStyle) {
+    return h("div", { style: "display:flex;align-items:center;gap:8px;font-size:12.5px;" },
+      h("span", { style: "width:10px;height:10px;border-radius:3px;flex:none;background:" + color + ";" }),
+      h("span", { style: "color:#54514A;" }, label),
+      h("span", { style: "margin-left:auto;font-family:'Geist Mono',monospace;font-weight:600;" + (valueStyle || "") }, value));
+  }
   function onboardingPanel() {
     var rk = riskStatus();
     var steps = [
@@ -1165,12 +1219,29 @@
         onb || emptyCard("Aún no tienes operaciones", "Pulsa “Nueva operación” arriba a la derecha para registrar tu primer trade."));
     }
     var m = metrics();
+    var x = advancedStats();
     var setupG = group(function (t) { return t.setup; });
     var setupData = Object.keys(setupG).map(function (k) { return { label: setupG[k].key, value: setupG[k].pnl }; });
     var recentRows = state.trades.slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; }).slice(0, 6).map(buildRow);
     var winBar = h("div", { style: "display:flex;height:5px;border-radius:3px;overflow:hidden;margin-top:12px;background:#FBEAE7;" },
       h("div", { style: "height:100%;background:#16915B;width:" + Math.round(m.wr * 100) + "%;" }));
     var bench = monthlyBenchmark();
+    // Win/loss + long/short donuts
+    var longs = state.trades.filter(function (t) { return t.side === "long"; });
+    var shorts = state.trades.filter(function (t) { return t.side === "short"; });
+    var longPnl = longs.reduce(function (a, t) { return a + t.pnl; }, 0);
+    var shortPnl = shorts.reduce(function (a, t) { return a + t.pnl; }, 0);
+    var wlDonut = donutCard("Ganadoras vs. perdedoras", "Tasa de acierto", donutEl(
+      [{ value: m.wins, color: "#16915B" }, { value: m.losses, color: "#D6483B" }, { value: x.be, color: "#D8D2C6" }],
+      Math.round(m.wr * 100) + "%", "win rate"),
+      [legendRow("#16915B", "Ganadoras", m.wins + " · " + signed(x.gp), "color:#16915B;"),
+       legendRow("#D6483B", "Perdedoras", m.losses + " · " + signed(-x.gl), "color:#D6483B;"),
+       x.be ? legendRow("#D8D2C6", "Break-even", "" + x.be) : null]);
+    var lsDonut = donutCard("Largo vs. corto", "Sesgo direccional", donutEl(
+      [{ value: longs.length, color: "#3D6FB0" }, { value: shorts.length, color: "#C77B2A" }],
+      state.trades.length ? Math.round(longs.length / state.trades.length * 100) + "%" : "—", "en largo"),
+      [legendRow("#3D6FB0", "Largo", longs.length + " · " + signed(longPnl), pnlColor(longPnl)),
+       legendRow("#C77B2A", "Corto", shorts.length + " · " + signed(shortPnl), pnlColor(shortPnl))]);
     return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:18px;" },
       onb,
       h("div", { style: "display:grid;grid-template-columns:repeat(4,1fr);gap:14px;" },
@@ -1178,6 +1249,13 @@
         kpiCard("Win rate", "", Math.round(m.wr * 100) + "%", winBar, m.wins + " ganadoras · " + m.losses + " perdedoras"),
         kpiCard("Profit factor", "", ratioStr(m.pf), null, money(m.gp) + " / " + money(m.gl)),
         kpiCard("Esperanza / op.", pnlColor(m.exp), signed(m.exp), null, "media por operación")),
+      h("div", { style: "display:grid;grid-template-columns:repeat(6,1fr);gap:12px;" },
+        miniKpi("Esperanza en R", rStr(x.expR), pnlColor(x.expR), "por operación"),
+        miniKpi("Ratio de pago", ratioStr(x.payoff), "", "ganancia/pérdida"),
+        miniKpi("Drawdown máx.", "−" + money(x.maxDD), "color:#D6483B;", x.maxDDDur + " ops"),
+        miniKpi("Racha actual", (x.curStreak > 0 ? "+" : "") + x.curStreak, x.curStreak >= 0 ? "color:#16915B;" : "color:#D6483B;", x.curStreak >= 0 ? "ganadoras" : "perdedoras"),
+        miniKpi("% días verdes", Math.round(x.dayWr * 100) + "%", x.dayWr >= 0.5 ? "color:#16915B;" : "", x.greenDays + "/" + x.days + " días"),
+        miniKpi("Mejor día", signed(x.bestDay), "color:#16915B;", "peor " + signed(x.worstDay))),
       bench ? benchmarkPanel(bench) : null,
       riskTrackerPanel(),
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:20px 20px 14px;" },
@@ -1185,6 +1263,11 @@
           h("div", { style: "font-size:14px;font-weight:600;" }, "Curva de capital"),
           h("div", { style: "font-size:12px;color:#807B72;font-family:'Geist Mono',monospace;" }, "acumulado · " + state.trades.length + " ops")),
         h("div", { style: "width:100%;" }, equityEl())),
+      h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:20px;" },
+        h("div", { style: "font-size:14px;font-weight:600;margin-bottom:2px;" }, "P&L mensual"),
+        h("div", { style: "font-size:12px;color:#A39E94;margin-bottom:8px;" }, "Resultado neto por mes (últimos 12)"),
+        h("div", null, barsEl(monthlyData(), { w: 900, h: 220 }))),
+      h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:18px;" }, wlDonut, lsDonut),
       h("div", { style: "display:grid;grid-template-columns:1.25fr 1fr;gap:18px;" },
         recentPanel(recentRows),
         h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;" },
