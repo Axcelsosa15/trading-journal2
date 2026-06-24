@@ -1263,7 +1263,13 @@
       h("div", { style: "margin-top:18px;" }, submit),
       toggle
     );
-    return centerWrap(card);
+    var legalLink = "color:#807B72;text-decoration:none;";
+    var legal = h("div", { style: "margin-top:18px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap;font-size:12px;" },
+      h("a", { href: "/privacy.html", target: "_blank", rel: "noopener", style: legalLink }, "Privacidad"),
+      h("a", { href: "/terms.html", target: "_blank", rel: "noopener", style: legalLink }, "Términos"),
+      h("a", { href: "/cookies.html", target: "_blank", rel: "noopener", style: legalLink }, "Cookies"),
+      h("a", { href: "/security.html", target: "_blank", rel: "noopener", style: legalLink }, "Seguridad"));
+    return centerWrap(h("div", { style: "display:flex;flex-direction:column;align-items:center;" }, card, legal));
   }
   function authInputStyle() { return "width:100%;padding:11px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;margin-top:6px;margin-bottom:4px;"; }
   function authLabelStyle() { return "display:block;font-size:12px;font-weight:600;color:#54514A;margin-top:12px;"; }

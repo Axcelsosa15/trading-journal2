@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="index,follow">
+  <link rel="canonical" href="https://bitacora.pages.dev/cookies.html">
+  <title>Política de Cookies · Bitácora</title>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;background:#FAF8F4;color:#16181C;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.65;font-size:16px}
+    .wrap{max-width:760px;margin:0 auto;padding:8px 22px 80px}
+    header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 0;border-bottom:1px solid #ECE7DD;margin-bottom:26px}
+    .brand{display:flex;align-items:center;gap:10px;font-weight:700;text-decoration:none;color:#16181C}
+    a{color:#2F5C96}
+    h1{font-size:28px;letter-spacing:-.5px;margin:.1em 0}
+    h2{font-size:18px;margin:1.8em 0 .4em}
+    .muted{color:#807B72;font-size:14px}
+    .back{font-size:14px;text-decoration:none;color:#807B72;border:1px solid #ECE7DD;padding:7px 12px;border-radius:9px;flex:none}
+    table{border-collapse:collapse;width:100%;font-size:14px;margin-top:8px}
+    th,td{border:1px solid #ECE7DD;padding:8px 10px;text-align:left;vertical-align:top}
+    th{background:#FBFAF7}
+    code{background:#F1EDE5;padding:1px 5px;border-radius:5px;font-size:14px}
+    footer{margin-top:48px;padding-top:18px;border-top:1px solid #ECE7DD;font-size:13px;color:#807B72;display:flex;gap:14px;flex-wrap:wrap}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="/index.html">
+        <svg width="26" height="26" viewBox="0 0 24 24"><rect width="24" height="24" rx="5" fill="#16181C"/><rect x="4" y="9" width="3.4" height="11" rx="1" fill="#16915B"/><rect x="13" y="6" width="3.4" height="9" rx="1" fill="#D6483B"/></svg>
+        Bitácora
+      </a>
+      <a class="back" href="/index.html">Volver a la app</a>
+    </header>
+
+    <h1>Política de Cookies</h1>
+    <p class="muted">Última actualización: 24 de junio de 2026</p>
+
+    <p>Bitácora <strong>no utiliza cookies de seguimiento ni publicitarias</strong>. Para funcionar, guarda cierta información en el almacenamiento local de tu navegador (<code>localStorage</code>), no en cookies de terceros.</p>
+
+    <h2>Qué guardamos en tu navegador</h2>
+    <table>
+      <thead><tr><th>Elemento</th><th>Finalidad</th><th>Tipo</th></tr></thead>
+      <tbody>
+        <tr><td>Token de sesión de Supabase</td><td>Mantenerte con la sesión iniciada de forma segura.</td><td>localStorage · necesario</td></tr>
+        <tr><td>Caché local de datos</td><td>Mostrar tus operaciones al instante y permitir uso sin conexión.</td><td>localStorage · necesario</td></tr>
+        <tr><td>Cola de cambios (outbox)</td><td>Guardar operaciones creadas sin conexión hasta poder sincronizarlas.</td><td>localStorage · necesario</td></tr>
+      </tbody>
+    </table>
+
+    <p style="margin-top:18px">Todos son <strong>estrictamente necesarios</strong> para el servicio, por lo que no se requiere un banner de consentimiento para fines publicitarios. Al cerrar sesión se borran la caché y la cola del usuario de ese dispositivo.</p>
+
+    <h2>Cómo eliminarlos</h2>
+    <p>Puedes cerrar sesión (lo limpia automáticamente) o borrar los datos del sitio desde la configuración de tu navegador. Eliminar el almacenamiento local cerrará tu sesión y vaciará la caché local; tus datos siguen a salvo en el servidor.</p>
+
+    <h2>Terceros</h2>
+    <p>Cargamos el SDK de Supabase desde <code>jsdelivr</code> y tipografías desde Google Fonts; estos servicios pueden registrar la solicitud de red para servir el recurso, pero Bitácora no coloca cookies de marketing.</p>
+
+    <footer>
+      <a href="/privacy.html">Privacidad</a>
+      <a href="/terms.html">Términos</a>
+      <a href="/cookies.html">Cookies</a>
+      <a href="/security.html">Seguridad</a>
+      <a href="/index.html">Volver a la app</a>
+    </footer>
+  </div>
+</body>
+</html>
