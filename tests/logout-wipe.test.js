@@ -1,6 +1,6 @@
 const fs=require("fs");const {JSDOM}=require("jsdom");const vm=require("vm");
 const dom=new JSDOM(fs.readFileSync("index.html","utf8"),{runScripts:"outside-only",pretendToBeVisual:true,url:"https://example.com/"});
-const {window}=dom; const d=window.document;
+const {window}=dom;
 window.URL.createObjectURL=()=>"blob:x";window.URL.revokeObjectURL=()=>{};
 const TRADES=[{id:"a",date:"2026-06-20",symbol:"MES",type:"future",side:"long",contracts:1,entry:5400,exit:5410,setup:"Ruptura",emotion:"Tranquilo",rating:3,note:"",pnl:50,account_id:null,tags:[],mae:"",mfe:""}];
 function makeFrom(tbl){let op="select";const b={};

@@ -35,9 +35,7 @@ setTimeout(()=>{try{
   const search=main.querySelector("input[placeholder*='Buscar']");
   search.focus(); // a real user is typing; the filter must not steal focus (no re-render)
   search.value="overtrading"; search.dispatchEvent(new window.Event("input",{bubbles:true}));
-  // count cards visible
-  const cards=[...main.querySelectorAll("div")].filter(el=>/Overtrading otra vez|Sesión sólida/.test(el.textContent)&&el.style.borderRadius==="14px");
-  // simpler: check the two title nodes' visibility via closest card display
+  // check the two title nodes' visibility via closest card display
   const titleNodes=[...main.querySelectorAll("div")].filter(el=>el.textContent==="Overtrading otra vez"||el.textContent==="Sesión sólida");
   const visible=titleNodes.filter(t=>{let p=t;while(p&&p!==main){if(p.style&&p.style.display==="none")return false;p=p.parentElement;}return true;});
   console.log("Live search shows only matching entries:", visible.length===1 && visible[0].textContent==="Overtrading otra vez");

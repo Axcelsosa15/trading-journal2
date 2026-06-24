@@ -29,8 +29,6 @@ setTimeout(()=>{try{
   click([...d.querySelectorAll("header button")].find(b=>/Nueva operación/.test(b.textContent)));
   setTimeout(()=>{
     const mr=d.getElementById("modal-root");
-    const set=(type,val)=>{const el=[...mr.querySelectorAll("input")].find(i=>i.getAttribute("type")===type);};
-    const inputs=[...mr.querySelectorAll("input")];
     // symbol(text), date, time, contracts(number), entry, exit
     const byType=t=>[...mr.querySelectorAll("input")].filter(i=>i.type===t);
     const nums=byType("number");

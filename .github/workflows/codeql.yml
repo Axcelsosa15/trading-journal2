@@ -21,6 +21,8 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           languages: javascript-typescript
-          queries: security-and-quality
+          # Security-focused suite: broad vuln coverage without style/quality
+          # lints (e.g. unused-variable) that only add noise in a SAST gate.
+          queries: security-extended
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
