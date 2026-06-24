@@ -144,6 +144,7 @@
     trades: [], journal: [], accounts: [],
     selectedId: null,
     fResult: "all", fSymbol: "all", fSetup: "all", fAccount: "all", fTag: "all",
+    fDateFrom: "", fDateTo: "", fPnlMin: "", fPnlMax: "", fRating: "all",
     calMonth: thisMonth(),
     showAdd: false, editId: null, draft: blankDraft(),
     showJournalAdd: false, jdraft: blankJournalDraft(), journalEditId: null, jSearch: "", jMood: "all",
@@ -1413,7 +1414,10 @@
         rows.push(row("Expectativa/op.", signed(st.expectancy), pnlColor(st.expectancy)));
         rows.push(row("DD realizado", "−" + money(st.maxDD), "color:#D6483B;"));
       }
-      return h("button", { style: "text-align:left;background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:4px;", hoverBg: "#FBFAF7", onClick: function () { openAccountEdit(a); } },
+      var viewBtn = h("button", { style: "flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#16181C;color:#fff;font-weight:600;font-size:12.5px;padding:9px;border-radius:9px;border:none;cursor:pointer;", onClick: function () { state.fAccount = a.id; state.tradesShown = 150; setView("trades"); } },
+        icon('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="18" r="1.3" fill="currentColor" stroke="none"/></svg>'), "Ver operaciones");
+      var editBtn = h("button", { style: "flex:none;background:#fff;border:1px solid #E2DDD3;color:#54514A;font-weight:600;font-size:12.5px;padding:9px 14px;border-radius:9px;cursor:pointer;", hoverBg: "#FAF8F4", onClick: function () { openAccountEdit(a); } }, "Editar");
+      return h("div", { style: "text-align:left;background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:4px;" },
         h("div", { style: "display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px;gap:8px;" },
           h("div", { style: "min-width:0;" },
             h("div", { style: "font-size:15.5px;font-weight:700;letter-spacing:-0.2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" }, a.name),
@@ -1421,7 +1425,8 @@
           h("div", { style: "display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex:none;" },
             h("span", { style: kindStyle(a.kind) }, KIND_LABEL[a.kind] || a.kind),
             h("span", { style: statusStyle(a.status) }, a.status.charAt(0).toUpperCase() + a.status.slice(1)))),
-        h("div", { style: "border-top:1px solid #F3EFE7;margin-top:4px;padding-top:8px;" }, rows));
+        h("div", { style: "border-top:1px solid #F3EFE7;margin-top:4px;padding-top:8px;" }, rows),
+        h("div", { style: "display:flex;gap:8px;margin-top:14px;" }, viewBtn, editBtn));
     });
     return h("div", { style: "max-width:1080px;margin:0 auto;" }, topBar,
       h("div", { style: "display:grid;grid-template-columns:repeat(3,1fr);gap:16px;" }, cards));
@@ -1618,6 +1623,11 @@
     if (state.fSetup !== "all") ft = ft.filter(function (t) { return t.setup === state.fSetup; });
     if (state.fAccount !== "all") ft = ft.filter(function (t) { return (t.account_id || "none") === state.fAccount; });
     if (state.fTag !== "all") ft = ft.filter(function (t) { return (t.tags || []).indexOf(state.fTag) >= 0; });
+    if (state.fDateFrom) ft = ft.filter(function (t) { return t.date >= state.fDateFrom; });
+    if (state.fDateTo) ft = ft.filter(function (t) { return t.date <= state.fDateTo; });
+    if (state.fRating !== "all") ft = ft.filter(function (t) { return String(t.rating) === state.fRating; });
+    if (state.fPnlMin !== "") ft = ft.filter(function (t) { return t.pnl >= Number(state.fPnlMin); });
+    if (state.fPnlMax !== "") ft = ft.filter(function (t) { return t.pnl <= Number(state.fPnlMax); });
     ft.sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
     // Render windowing: only build the first N rows to keep large lists smooth.
     var shown = Math.min(ft.length, state.tradesShown);
@@ -1647,6 +1657,25 @@
       tagSelect.value = state.fTag;
     }
 
+    // Advanced filters: date range, P&L range, rating.
+    var advInput = "font-size:12.5px;padding:7px 9px;border:1px solid #ECE7DD;border-radius:8px;background:#fff;color:#16181C;";
+    var dateFrom = h("input", { type: "date", style: advInput, onChange: function (ev) { state.fDateFrom = ev.target.value; state.tradesShown = 150; render(); } }); dateFrom.value = state.fDateFrom;
+    var dateTo = h("input", { type: "date", style: advInput, onChange: function (ev) { state.fDateTo = ev.target.value; state.tradesShown = 150; render(); } }); dateTo.value = state.fDateTo;
+    var pnlMin = h("input", { type: "number", placeholder: "mín", style: advInput + "width:74px;font-family:'Geist Mono',monospace;", onChange: function (ev) { state.fPnlMin = ev.target.value; state.tradesShown = 150; render(); } }); pnlMin.value = state.fPnlMin;
+    var pnlMax = h("input", { type: "number", placeholder: "máx", style: advInput + "width:74px;font-family:'Geist Mono',monospace;", onChange: function (ev) { state.fPnlMax = ev.target.value; state.tradesShown = 150; render(); } }); pnlMax.value = state.fPnlMax;
+    var ratingSelect = h("select", { style: advInput + "cursor:pointer;font-weight:500;", onChange: function (ev) { state.fRating = ev.target.value; state.tradesShown = 150; render(); } },
+      [h("option", { value: "all" }, "Toda valoración")].concat([5, 4, 3, 2, 1].map(function (r) { return h("option", { value: String(r) }, "★".repeat(r)); })));
+    ratingSelect.value = state.fRating;
+    var activeCount = [state.fResult !== "all", state.fSymbol !== "all", state.fSetup !== "all", state.fAccount !== "all", state.fTag !== "all", !!state.fDateFrom, !!state.fDateTo, state.fRating !== "all", state.fPnlMin !== "", state.fPnlMax !== ""].filter(Boolean).length;
+    function clearFilters() { state.fResult = "all"; state.fSymbol = "all"; state.fSetup = "all"; state.fAccount = "all"; state.fTag = "all"; state.fDateFrom = ""; state.fDateTo = ""; state.fRating = "all"; state.fPnlMin = ""; state.fPnlMax = ""; state.tradesShown = 150; render(); }
+    var advBar = h("div", { style: "display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:14px;background:#fff;border:1px solid #ECE7DD;border-radius:12px;padding:10px 12px;" },
+      h("span", { style: "font-size:12px;color:#807B72;font-weight:600;" }, "Filtros"),
+      h("span", { style: "font-size:12px;color:#A39E94;" }, "Desde"), dateFrom,
+      h("span", { style: "font-size:12px;color:#A39E94;" }, "Hasta"), dateTo,
+      h("span", { style: "font-size:12px;color:#A39E94;margin-left:4px;" }, "P&L"), pnlMin, h("span", { style: "color:#A39E94;" }, "–"), pnlMax,
+      ratingSelect,
+      activeCount ? h("span", { style: "font-size:11.5px;font-weight:600;color:#3D6FB0;background:#EAF0F7;border-radius:20px;padding:3px 10px;" }, activeCount + (activeCount > 1 ? " filtros activos" : " filtro activo")) : null,
+      activeCount ? h("button", { style: "font-size:12.5px;font-weight:600;color:#D6483B;background:none;border:none;cursor:pointer;margin-left:auto;", onClick: clearFilters }, "Limpiar filtros") : null);
     var gridCols = "84px 60px 1fr 64px 92px 92px 110px 120px 96px";
     var headerCols = ["Fecha", "Lado", "Símbolo", "Cont.", "Entrada", "Salida", "Setup", "P&L", "Valor."];
     var headerRow = h("div", { style: "display:grid;grid-template-columns:" + gridCols + ";gap:8px;padding:11px 18px;border-bottom:1px solid #ECE7DD;font-size:11px;color:#A39E94;font-weight:600;letter-spacing:.3px;text-transform:uppercase;background:#FBFAF7;" },
@@ -1677,6 +1706,7 @@
           h("button", { title: "Copia de seguridad de todos tus datos (JSON)", onClick: exportAll, style: exportBtnStyle(), hoverBg: "#FAF8F4" }, "Backup"),
           h("button", { title: "Importar operaciones desde un CSV", onClick: openImport, style: exportBtnStyle(), hoverBg: "#FAF8F4" },
             icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>'), "Importar"))),
+      advBar,
       h("div", { class: "trades-card", style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;overflow:hidden;" },
         h("div", { class: "trades-scroll" }, headerRow, bodyRows)));
   }
@@ -2655,7 +2685,7 @@
       // Wipe the cached financial snapshot + outbox so it can't be read on a
       // shared device after logout (security hardening F-05).
       if (prevUser) { try { localStorage.removeItem("bitacora_cache_" + prevUser.id); localStorage.removeItem("bitacora_outbox_" + prevUser.id); } catch (e) { } }
-      state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.fTag = "all"; state.quickNote = ""; state.jSearch = ""; state.jMood = "all"; state.pending = 0;
+      state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.fTag = "all"; state.fResult = "all"; state.fSymbol = "all"; state.fSetup = "all"; state.fDateFrom = ""; state.fDateTo = ""; state.fRating = "all"; state.fPnlMin = ""; state.fPnlMax = ""; state.quickNote = ""; state.jSearch = ""; state.jMood = "all"; state.pending = 0;
       state.mfaGate = false; state.mfaChecked = false; state.mfaFactors = []; state.mfaFactorsLoaded = false; render();
     }
   });
