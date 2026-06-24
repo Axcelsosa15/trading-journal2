@@ -143,6 +143,7 @@
     online: (typeof navigator !== "undefined" ? navigator.onLine !== false : true), pending: 0, usingCache: false,
     corrFactor: "rating", corrResult: "expectancy",
     tradesShown: 150,
+    showImport: false, import: null, importResult: 0,
     mfaGate: false, mfaChecked: false, mfa: { code: "", busy: false, error: "" },
     showMfa: false, mfaFactors: [], mfaFactorsLoaded: false,
     mfaEnroll: { id: null, qr: "", secret: "", code: "", busy: false, error: "" },
@@ -473,6 +474,172 @@
       lines.push([t.date.slice(0, 4), t.date, accountName(t.account_id) || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.pnl].map(csvCell).join(","));
     });
     downloadText("bitacora-impuestos-" + todayISO() + ".csv", "﻿" + lines.join("\r\n"), "text/csv");
+  }
+
+  // ---------- CSV import ----------
+  // Minimal RFC-4180-ish parser: handles quotes, escaped quotes, commas/newlines
+  // inside quoted fields, CRLF, and a leading BOM. Returns an array of rows.
+  function parseCSV(text) {
+    var rows = [], row = [], field = "", i = 0, inQ = false;
+    text = String(text || "").replace(/^﻿/, "");
+    while (i < text.length) {
+      var c = text[i];
+      if (inQ) {
+        if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+        else field += c;
+      } else if (c === '"') inQ = true;
+      else if (c === ",") { row.push(field); field = ""; }
+      else if (c === "\n" || c === "\r") {
+        if (c === "\r" && text[i + 1] === "\n") i++;
+        row.push(field); field = ""; rows.push(row); row = [];
+      } else field += c;
+      i++;
+    }
+    if (field !== "" || row.length) { row.push(field); rows.push(row); }
+    // Drop fully-empty trailing rows.
+    return rows.filter(function (r) { return r.some(function (v) { return String(v).trim() !== ""; }); });
+  }
+  var IMPORT_FIELDS = [
+    { k: "date", label: "Fecha", req: true, kw: /fecha|date/i },
+    { k: "time", label: "Hora", kw: /hora|time/i },
+    { k: "symbol", label: "Símbolo", req: true, kw: /s[íi]mbolo|symbol|ticker|activo/i },
+    { k: "type", label: "Instrumento", kw: /instrument|tipo|type/i },
+    { k: "side", label: "Dirección", req: true, kw: /direcci[óo]n|side|lado|direction|compra|buy/i },
+    { k: "contracts", label: "Contratos", req: true, kw: /contrato|contract|cantidad|qty|quantity|size|lots?/i },
+    { k: "entry", label: "Entrada", req: true, kw: /entrada|entry|apertura|open/i },
+    { k: "exit", label: "Salida", req: true, kw: /salida|exit|cierre|close/i },
+    { k: "pnl", label: "P&L", kw: /pnl|p&l|p\/l|profit|gananc|resultado|net/i },
+    { k: "setup", label: "Setup", kw: /setup|estrategia|strategy/i },
+    { k: "emotion", label: "Emoción", kw: /emoci|emotion|mood/i },
+    { k: "rating", label: "Valoración", kw: /valora|rating|score|estrella/i },
+    { k: "account", label: "Cuenta", kw: /cuenta|account/i },
+    { k: "note", label: "Notas", kw: /nota|note|coment|comment/i },
+  ];
+  function guessMapping(headers) {
+    var map = {};
+    IMPORT_FIELDS.forEach(function (f) {
+      var idx = headers.findIndex(function (hd) { return f.kw.test(String(hd || "").trim()); });
+      map[f.k] = idx; // -1 if not found
+    });
+    return map;
+  }
+  function importNum(v) {
+    if (v == null) return NaN;
+    var s = String(v).replace(/[^\d.,\-]/g, "").replace(/,(?=\d{3}\b)/g, "").replace(",", ".");
+    return parseFloat(s);
+  }
+  function importSide(v) {
+    var s = String(v || "").trim().toLowerCase();
+    if (/^(long|largo|buy|compra|l|b|alcista)/.test(s)) return "long";
+    if (/^(short|corto|sell|venta|s|bajista)/.test(s)) return "short";
+    return "";
+  }
+  function importType(v) {
+    var s = String(v || "").trim().toLowerCase();
+    return /opc|option|call|put/.test(s) ? "option" : "future";
+  }
+  function importDate(v) {
+    var s = String(v || "").trim();
+    var m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/); // ISO-ish YYYY-MM-DD
+    if (m) return m[1] + "-" + pad(m[2]) + "-" + pad(m[3]);
+    m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/); // D/M/Y or M/D/Y
+    if (m) {
+      var a = +m[1], b = +m[2];
+      var day = a, mon = b;
+      if (a > 12 && b <= 12) { day = a; mon = b; }        // clearly day-first
+      else if (b > 12 && a <= 12) { day = b; mon = a; }    // clearly month-first
+      // else ambiguous → assume day-first (European brokers)
+      if (mon < 1 || mon > 12 || day < 1 || day > 31) return null;
+      return m[3] + "-" + pad(mon) + "-" + pad(day);
+    }
+    return null;
+  }
+  // Build a DB row from a CSV record + column mapping. Returns {row} or {error}.
+  function buildImportRow(cells, map) {
+    function get(k) { var i = map[k]; return i != null && i >= 0 ? cells[i] : ""; }
+    var date = importDate(get("date"));
+    if (!date) return { error: "fecha inválida" };
+    var symbol = String(get("symbol") || "").trim().toUpperCase();
+    if (!symbol) return { error: "símbolo vacío" };
+    var side = importSide(get("side"));
+    if (!side) return { error: "dirección no reconocida" };
+    var contracts = Math.round(importNum(get("contracts")));
+    if (!(contracts > 0)) return { error: "contratos inválidos" };
+    var entry = importNum(get("entry")), exit = importNum(get("exit"));
+    if (isNaN(entry) || isNaN(exit)) return { error: "entrada/salida inválidas" };
+    var type = map.type >= 0 ? importType(get("type")) : "future";
+    var ratingRaw = map.rating >= 0 ? Math.round(importNum(get("rating"))) : 3;
+    var rating = ratingRaw >= 1 && ratingRaw <= 5 ? ratingRaw : 3;
+    var pnl = map.pnl >= 0 && !isNaN(importNum(get("pnl"))) ? Math.round(importNum(get("pnl")))
+      : pnlOf({ symbol: symbol, type: type, side: side, contracts: contracts, entry: entry, exit: exit });
+    var acctId = null;
+    if (map.account >= 0) {
+      var an = String(get("account") || "").trim().toLowerCase();
+      var match = state.accounts.find(function (a) { return a.name.toLowerCase() === an; });
+      acctId = match ? match.id : null;
+    }
+    var timeVal = map.time >= 0 ? String(get("time") || "").trim() : "";
+    return {
+      row: {
+        date: date, time: timeVal || null, symbol: symbol, type: type, side: side,
+        contracts: contracts, entry: entry, exit: exit,
+        setup: (map.setup >= 0 && String(get("setup")).trim()) || "Ruptura",
+        emotion: (map.emotion >= 0 && String(get("emotion")).trim()) || "Tranquilo",
+        rating: rating, note: map.note >= 0 ? String(get("note") || "") : "",
+        pnl: pnl, account_id: acctId, tags: [], mae: null, mfe: null,
+      },
+    };
+  }
+  // Parse all data rows against the current mapping → { valid:[rows], invalid:n, errors:[] }.
+  function importPreview() {
+    var im = state.import;
+    if (!im || !im.rows.length) return { valid: [], invalid: 0, errors: [] };
+    var valid = [], invalid = 0, errors = [];
+    im.rows.slice(1).forEach(function (cells, n) {
+      var r = buildImportRow(cells, im.map);
+      if (r.row) valid.push(r.row);
+      else { invalid++; if (errors.length < 5) errors.push("Fila " + (n + 2) + ": " + r.error); }
+    });
+    return { valid: valid, invalid: invalid, errors: errors };
+  }
+  async function runImport() {
+    var prev = importPreview();
+    if (!prev.valid.length) return;
+    state.import.busy = true; renderModal();
+    var inserted = [];
+    if (isOnline()) {
+      try {
+        var res = await SB.from("trades").insert(prev.valid).select();
+        if (res.error) throw res.error;
+        inserted = res.data.map(coerceTrade);
+      } catch (e) {
+        // Fall back to queuing everything for later sync.
+        prev.valid.forEach(function (row) { var tid = "tmp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7); inserted.push(coerceTrade(Object.assign({ id: tid }, row))); enqueue("trades", row, tid); });
+      }
+    } else {
+      prev.valid.forEach(function (row) { var tid = "tmp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7); inserted.push(coerceTrade(Object.assign({ id: tid }, row))); enqueue("trades", row, tid); });
+    }
+    state.trades = inserted.concat(state.trades);
+    saveCache();
+    state.importResult = inserted.length;
+    closeImport();
+    render();
+  }
+  function openImport() { state.showImport = true; state.import = { rows: [], headers: [], map: {}, fileName: "", error: "", busy: false }; renderModal(); }
+  function closeImport() { state.showImport = false; state.import = null; renderModal(); }
+  function handleImportFile(file) {
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var rows = parseCSV(reader.result);
+        if (rows.length < 2) { state.import = Object.assign(state.import || {}, { error: "El archivo no tiene filas de datos.", rows: [], headers: [] }); renderModal(); return; }
+        state.import = { rows: rows, headers: rows[0], map: guessMapping(rows[0]), fileName: file.name, error: "", busy: false };
+      } catch (e) { state.import = Object.assign(state.import || {}, { error: "No se pudo leer el archivo.", rows: [], headers: [] }); }
+      renderModal();
+    };
+    reader.onerror = function () { state.import = Object.assign(state.import || {}, { error: "No se pudo leer el archivo.", rows: [], headers: [] }); renderModal(); };
+    reader.readAsText(file);
   }
 
   // ---------- mutations ----------
@@ -1461,7 +1628,9 @@
           h("button", { title: "Exportar a CSV las operaciones filtradas", onClick: function () { exportCSV(ft); }, style: exportBtnStyle(), hoverBg: "#FAF8F4" },
             icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>'), "CSV"),
           h("button", { title: "Exportar CSV para impuestos (año + P&L)", onClick: function () { exportTax(ft); }, style: exportBtnStyle(), hoverBg: "#FAF8F4" }, "Tax"),
-          h("button", { title: "Copia de seguridad de todos tus datos (JSON)", onClick: exportAll, style: exportBtnStyle(), hoverBg: "#FAF8F4" }, "Backup"))),
+          h("button", { title: "Copia de seguridad de todos tus datos (JSON)", onClick: exportAll, style: exportBtnStyle(), hoverBg: "#FAF8F4" }, "Backup"),
+          h("button", { title: "Importar operaciones desde un CSV", onClick: openImport, style: exportBtnStyle(), hoverBg: "#FAF8F4" },
+            icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>'), "Importar"))),
       h("div", { class: "trades-card", style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;overflow:hidden;" },
         h("div", { class: "trades-scroll" }, headerRow, bodyRows)));
   }
@@ -2006,7 +2175,8 @@
     var root = document.getElementById("modal-root");
     root.innerHTML = "";
     if (!state.user) return;
-    if (state.showAdd) root.appendChild(addModal());
+    if (state.showImport) root.appendChild(importModal());
+    else if (state.showAdd) root.appendChild(addModal());
     else if (state.showJournalAdd) root.appendChild(journalModal());
     else if (state.showAccountAdd) root.appendChild(accountModal());
     else if (state.showChecklist) root.appendChild(checklistModal());
@@ -2123,6 +2293,43 @@
     return el;
   }
 
+  function importModal() {
+    var im = state.import || {};
+    var loaded = im.rows && im.rows.length;
+    var prev = loaded ? importPreview() : null;
+    var selStyle = "width:100%;padding:8px 10px;border:1px solid #E2DDD3;border-radius:8px;font-size:13px;cursor:pointer;background:#fff;";
+    var fileInput = h("input", { type: "file", accept: ".csv,text/csv", style: "display:none;", onChange: function (e) { handleImportFile(e.target.files && e.target.files[0]); } });
+    var picker = h("label", { style: "display:flex;align-items:center;justify-content:center;gap:10px;border:1.5px dashed #D8D2C6;border-radius:12px;padding:18px;cursor:pointer;color:#54514A;font-size:13.5px;font-weight:500;background:#FBFAF7;", hoverBg: "#F5F1E8" },
+      icon('<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>'),
+      h("span", null, loaded ? ("Archivo: " + im.fileName + " · elegir otro") : "Selecciona un archivo CSV"), fileInput);
+    var body = [
+      h("div", { style: "font-size:13px;color:#807B72;line-height:1.5;" }, "Importa operaciones desde un CSV de tu bróker o prop firm. Asigna cada columna y revisa el resumen antes de importar. La detección de columnas es automática; ajústala si hace falta."),
+      picker,
+    ];
+    if (im.error) body.push(h("div", { style: "background:#FCF1EF;border:1px solid #F2D9D5;color:#B23A2E;border-radius:9px;padding:10px 12px;font-size:12.5px;" }, im.error));
+    if (loaded) {
+      var mapRows = IMPORT_FIELDS.map(function (f) {
+        var sel = h("select", { style: selStyle, onChange: function (e) { state.import.map[f.k] = Number(e.target.value); renderModal(); } },
+          [h("option", { value: "-1" }, "— (ninguna)")].concat(im.headers.map(function (hd, idx) { return h("option", { value: String(idx) }, hd || ("Columna " + (idx + 1))); })));
+        sel.value = String(im.map[f.k] == null ? -1 : im.map[f.k]);
+        return h("div", { style: "display:grid;grid-template-columns:130px 1fr;gap:10px;align-items:center;" },
+          h("span", { style: "font-size:12.5px;font-weight:600;color:#54514A;" }, f.label, f.req ? h("span", { style: "color:#D6483B;margin-left:4px;" }, "*") : null), sel);
+      });
+      body.push(h("div", { style: "display:flex;flex-direction:column;gap:9px;border-top:1px solid #ECE7DD;padding-top:14px;" }, mapRows));
+      body.push(h("div", { style: "background:#FBFAF7;border:1px solid #ECE7DD;border-radius:10px;padding:12px 14px;font-size:13px;" },
+        h("div", { style: "font-weight:600;" + (prev.valid.length ? "color:#16915B;" : "color:#A39E94;") }, prev.valid.length + " operación(es) lista(s) para importar"),
+        prev.invalid ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.invalid + " fila(s) con error se omitirán") : null,
+        prev.errors.length ? h("div", { style: "margin-top:6px;color:#A39E94;font-size:12px;font-family:'Geist Mono',monospace;white-space:pre-line;" }, prev.errors.join("\n")) : null));
+    }
+    var canImport = !im.busy && prev && prev.valid.length > 0;
+    var importBtn = h("button", { style: "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (canImport ? "background:#16181C;color:#fff;" : "background:#CFC9BD;color:#fff;cursor:not-allowed;"), onClick: function () { if (canImport) runImport(); } },
+      im.busy ? "Importando…" : ("Importar" + (prev && prev.valid.length ? " " + prev.valid.length : "") + " operaciones"));
+    var footer = [
+      h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #E2DDD3;background:#fff;font-weight:600;font-size:13.5px;", hoverBg: "#FAF8F4", onClick: closeImport }, "Cancelar"),
+      importBtn,
+    ];
+    return modalFrame("Importar operaciones (CSV)", closeImport, body, footer, 600);
+  }
   function addModal() {
     var inMono = "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;font-family:'Geist Mono',monospace;";
     var editing = state.editId != null;
