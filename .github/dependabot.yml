@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # Dev dependency (jsdom) used only by the test harness.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # Keep GitHub Actions (CI, CodeQL, ZAP) pinned and patched.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

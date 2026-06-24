@@ -54,6 +54,9 @@ offline viewing.
 - `index.html` — page shell.
 - `styles.css` — global resets, fonts, and overlay animations.
 - `app.js` — data model, computed metrics, charts, views, and interactions.
+- `sw.js`, `manifest.webmanifest`, `icon-*.png` — PWA (offline app shell + install).
+- `tests/` — headless jsdom smoke tests; `tests/run.js` is the runner.
+- `SECURITY.md` — security assessment and remediation guide.
 
 ## Run
 
@@ -62,3 +65,17 @@ Open `index.html` directly, or serve the folder:
 ```sh
 python3 -m http.server 8000   # then visit http://localhost:8000
 ```
+
+## Tests
+
+The app has **no runtime dependencies**; `jsdom` is a dev-only dependency for the
+headless smoke tests that boot the app with a mocked Supabase client.
+
+```sh
+npm install          # installs jsdom
+npm run check        # node --check on app.js / sw.js
+npm test             # runs tests/*.test.js (8 suites)
+```
+
+CI (`.github/workflows/ci.yml`) runs these on every PR and push to `main`.
+`codeql.yml` adds SAST and `dependabot.yml` keeps dev deps + Actions patched.
