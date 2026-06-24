@@ -31,6 +31,10 @@ aplicará cuando existan apps nativas; hoy el cliente móvil es la **PWA**).
 - **Anti-clickjacking** (frame-busting JS) y `referrer: no-referrer`.
 - **Logout seguro:** al cerrar sesión se borran la caché y el outbox del usuario
   en `localStorage`.
+- **Almacenamiento (capturas):** bucket privado `trade-screenshots` con RLS por
+  usuario en `storage.objects` — cada quien solo lee/escribe objetos cuyo primer
+  segmento de ruta es su `auth.uid()`; las imágenes se sirven con URL firmada de
+  corta duración (no hay acceso público). (ASVS V4.1)
 - **Integridad de datos (BD):** constraints `CHECK` en `trades`
   (`contracts > 0`, `rating 1–5`, `side`/`type` válidos) y `accounts`
   (`kind`/`status` válidos) — defensa en profundidad además de la validación
