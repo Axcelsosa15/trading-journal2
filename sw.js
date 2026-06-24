@@ -33,7 +33,10 @@ self.addEventListener("install", function (e) {
 
 // Activate the waiting worker when the page asks (user clicked "Actualizar").
 self.addEventListener("message", function (e) {
-  if (e && e.data === "skipWaiting") self.skipWaiting();
+  if (!e) return;
+  // Only honour messages from same-origin clients (origin is "" for same-context).
+  if (e.origin && e.origin !== self.location.origin) return;
+  if (e.data === "skipWaiting") self.skipWaiting();
 });
 
 self.addEventListener("activate", function (e) {
