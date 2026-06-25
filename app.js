@@ -391,6 +391,24 @@
     try { localStorage.setItem("bitacora_theme", next); } catch (e) { }
     applyTheme(next); render();
   }
+  // Build stamp so you can always tell which version you're running.
+  var APP_VERSION = "2026.06.25";
+  // Force the freshest deploy: unregister the service worker, drop every cache,
+  // then hard-reload. Cures a browser stuck on an old cached build.
+  async function forceUpdate() {
+    state.updating = true; render();
+    try {
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+        var regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(function (r) { return r.unregister(); }));
+      }
+      if (window.caches && caches.keys) {
+        var keys = await caches.keys();
+        await Promise.all(keys.map(function (k) { return caches.delete(k); }));
+      }
+    } catch (e) { /* best-effort */ }
+    location.reload();
+  }
 
   // ---------- MFA (TOTP 2FA) ----------
   function hasMfaApi() { return SB.auth && SB.auth.mfa; }
@@ -2484,6 +2502,12 @@
       h("div", { style: "display:flex;align-items:center;gap:14px;" },
         saveBtn,
         state.settingsSaved ? h("span", { style: "font-size:12.5px;color:#16915B;font-weight:600;" }, "✓ Ajustes guardados") : null),
+      h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:22px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;" },
+        h("div", null,
+          h("div", { style: "font-size:15px;font-weight:600;margin-bottom:3px;" }, "Versión y actualizaciones"),
+          h("div", { style: "font-size:12.5px;color:#A39E94;max-width:540px;" }, "Estás en la versión " + APP_VERSION + ". Si no ves los últimos cambios, fuerza la actualización: limpia la caché del navegador y recarga con lo más reciente.")),
+        h("button", { onClick: forceUpdate, disabled: !!state.updating, style: "background:#16181C;color:#fff;font-weight:600;font-size:13.5px;padding:11px 18px;border-radius:10px;flex:none;" + (state.updating ? "opacity:.6;cursor:wait;" : ""), },
+          icon('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:6px;"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>'), state.updating ? "Actualizando…" : "Buscar actualizaciones")),
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:22px;" },
         h("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:3px;" },
           icon('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3D6FB0" stroke-width="2"><path d="M4 19V6m0 0 4 3 4-6 4 9 4-3v10"/></svg>'),
