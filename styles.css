@@ -6,9 +6,16 @@ body {
   font-family: Geist, sans-serif;
   color: #16181C;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-kerning: normal;
+  font-optical-sizing: auto;
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+  /* Tabular (monospaced-width) numerals so figures line up across the app. */
+  font-variant-numeric: tabular-nums;
   font-size: 14px;
 }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; transition: background .14s ease, transform .06s ease, box-shadow .14s ease; }
 button:active { transform: translateY(0.5px); }
 input, select, textarea { font-family: inherit; color: inherit; }
