@@ -104,3 +104,80 @@ body { padding-bottom: env(safe-area-inset-bottom); }
 .brand-logo { transition: transform .25s ease; }
 .brand-logo:hover { transform: scale(1.08) rotate(-3deg); }
 .brand-logo:hover svg rect { animation-duration: .8s; }
+
+/* ============================================================================
+   Premium design pass — Apple refinement × NVIDIA energy × Claude warmth.
+   Skins the app "chrome": ambient depth, frosted overlays, layered shadows,
+   a refined sidebar and springy micro-interactions. CSS-only; the reduced-motion
+   rule above still neutralises animation for users who ask for it.
+   ============================================================================ */
+
+/* Ambient, paper-warm backdrop with a faint green/coral wash for depth. */
+body {
+  background:
+    radial-gradient(1100px 560px at 82% -10%, rgba(22, 145, 91, 0.055), transparent 60%),
+    radial-gradient(820px 480px at -8% 112%, rgba(214, 72, 59, 0.045), transparent 55%),
+    #FAF8F4;
+  background-attachment: fixed;
+}
+
+/* Brand-tinted selection + a soft focus glow layered over the outline. */
+::selection { background: rgba(22, 145, 91, 0.20); }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  box-shadow: 0 0 0 4px rgba(61, 111, 176, 0.18);
+}
+
+/* Refined pill scrollbar. */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-thumb {
+  background: #d9d3c7; border-radius: 99px;
+  border: 3px solid transparent; background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: #c6bfb0; background-clip: padding-box; }
+
+/* Sidebar: soft vertical gradient, hairline and a faint depth shadow. */
+.side {
+  background: linear-gradient(180deg, #ffffff 0%, #fbfaf6 100%) !important;
+  box-shadow: 14px 0 44px -34px rgba(22, 24, 28, 0.22);
+}
+
+/* Apple-style frosted, blurred overlays. */
+.dc-overlay {
+  backdrop-filter: blur(7px) saturate(1.08);
+  -webkit-backdrop-filter: blur(7px) saturate(1.08);
+}
+
+/* Floating surfaces: layered, realistic shadows instead of a single flat one. */
+.dc-modal {
+  box-shadow:
+    0 1px 1px rgba(22, 24, 28, 0.04),
+    0 2px 6px rgba(22, 24, 28, 0.06),
+    0 24px 60px -16px rgba(22, 24, 28, 0.30) !important;
+}
+.dc-drawer { box-shadow: -28px 0 70px -34px rgba(22, 24, 28, 0.38) !important; }
+
+/* Springy micro-interactions. */
+button {
+  transition: background .16s ease, transform .14s cubic-bezier(.2, .8, .2, 1),
+              box-shadow .18s ease, filter .16s ease;
+}
+button:active { transform: translateY(1px) scale(.997); }
+.dc-modal { animation: popIn .26s cubic-bezier(.2, .8, .2, 1) both; }
+.dc-drawer { animation: slideIn .26s cubic-bezier(.2, .8, .2, 1) both; }
+
+/* Brand badge: a subtle NVIDIA-green glow on hover (transform stays from above). */
+.brand-logo { transition: transform .25s cubic-bezier(.2, .8, .2, 1), box-shadow .25s ease; }
+.brand-logo:hover { box-shadow: 0 8px 22px -8px rgba(22, 145, 91, 0.55); }
+
+/* Primary "ink" buttons (and the active nav item) get a refined gradient face
+   and tactile depth — matched by their inline background so app.js stays untouched. */
+button[style*="background:#16181C"] {
+  background-image: linear-gradient(180deg, #262931 0%, #16181C 100%) !important;
+  box-shadow: 0 1px 2px rgba(22, 24, 28, 0.28), 0 8px 18px -10px rgba(22, 24, 28, 0.5);
+}
+button[style*="background:#16181C"]:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(22, 24, 28, 0.30), 0 14px 28px -12px rgba(22, 24, 28, 0.6);
+  filter: brightness(1.07);
+}
+button[style*="background:#16181C"]:active { transform: translateY(0); filter: brightness(1); }
