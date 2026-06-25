@@ -1400,7 +1400,7 @@
 
     var card = h("div", { class: "dc-modal", style: "width:380px;max-width:92vw;background:#fff;border:1px solid #ECE7DD;border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,.10);padding:30px 28px;" },
       h("div", { style: "display:flex;align-items:center;gap:11px;margin-bottom:22px;" },
-        h("div", { style: "width:34px;height:34px;border-radius:9px;background:#16181C;display:flex;align-items:center;justify-content:center;flex:none;" },
+        h("div", { class: "brand-logo", style: "width:34px;height:34px;border-radius:9px;background:#16181C;display:flex;align-items:center;justify-content:center;flex:none;" },
           icon('<svg width="19" height="19" viewBox="0 0 24 24" fill="none"><rect x="4" y="9" width="3.4" height="11" rx="1" fill="#16915B"/><line x1="5.7" y1="5" x2="5.7" y2="9" stroke="#16915B" stroke-width="1.6"/><line x1="5.7" y1="20" x2="5.7" y2="22.5" stroke="#16915B" stroke-width="1.6"/><rect x="13" y="6" width="3.4" height="9" rx="1" fill="#D6483B"/><line x1="14.7" y1="3" x2="14.7" y2="6" stroke="#D6483B" stroke-width="1.6"/><line x1="14.7" y1="15" x2="14.7" y2="18" stroke="#D6483B" stroke-width="1.6"/></svg>')),
         h("div", { style: "line-height:1.05;" },
           h("div", { style: "font-weight:700;font-size:17px;letter-spacing:-0.3px;" }, "Bitácora"),
@@ -1415,10 +1415,10 @@
     );
     var legalLink = "color:#807B72;text-decoration:none;";
     var legal = h("div", { style: "margin-top:18px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap;font-size:12px;" },
-      h("a", { href: "/privacy.html", target: "_blank", rel: "noopener", style: legalLink }, "Privacidad"),
-      h("a", { href: "/terms.html", target: "_blank", rel: "noopener", style: legalLink }, "Términos"),
-      h("a", { href: "/cookies.html", target: "_blank", rel: "noopener", style: legalLink }, "Cookies"),
-      h("a", { href: "/security.html", target: "_blank", rel: "noopener", style: legalLink }, "Seguridad"));
+      h("a", { href: "privacy.html", target: "_blank", rel: "noopener", style: legalLink }, "Privacidad"),
+      h("a", { href: "terms.html", target: "_blank", rel: "noopener", style: legalLink }, "Términos"),
+      h("a", { href: "cookies.html", target: "_blank", rel: "noopener", style: legalLink }, "Cookies"),
+      h("a", { href: "security.html", target: "_blank", rel: "noopener", style: legalLink }, "Seguridad"));
     return centerWrap(h("div", { style: "display:flex;flex-direction:column;align-items:center;" }, card, legal));
   }
   function authInputStyle() { return "width:100%;padding:11px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;margin-top:6px;margin-bottom:4px;"; }
@@ -1447,7 +1447,7 @@
 
     return h("aside", { class: "side", style: "width:240px;flex:none;display:flex;flex-direction:column;background:#FFFFFF;border-right:1px solid #ECE7DD;padding:20px 14px;" },
       h("div", { style: "display:flex;align-items:center;gap:10px;padding:6px 8px 22px 8px;" },
-        h("div", { style: "width:30px;height:30px;border-radius:8px;background:#16181C;display:flex;align-items:center;justify-content:center;flex:none;" },
+        h("div", { class: "brand-logo", style: "width:30px;height:30px;border-radius:8px;background:#16181C;display:flex;align-items:center;justify-content:center;flex:none;" },
           icon('<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="4" y="9" width="3.4" height="11" rx="1" fill="#16915B"/><line x1="5.7" y1="5" x2="5.7" y2="9" stroke="#16915B" stroke-width="1.6"/><line x1="5.7" y1="20" x2="5.7" y2="22.5" stroke="#16915B" stroke-width="1.6"/><rect x="13" y="6" width="3.4" height="9" rx="1" fill="#D6483B"/><line x1="14.7" y1="3" x2="14.7" y2="6" stroke="#D6483B" stroke-width="1.6"/><line x1="14.7" y1="15" x2="14.7" y2="18" stroke="#D6483B" stroke-width="1.6"/></svg>')),
         h("div", { class: "side-text", style: "line-height:1;" },
           h("div", { style: "font-weight:700;font-size:15px;letter-spacing:-0.2px;" }, "Bitácora"),

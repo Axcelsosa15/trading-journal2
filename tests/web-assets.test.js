@@ -18,4 +18,7 @@ console.log("index has canonical:", /rel="canonical"/.test(idx));
 console.log("index has Open Graph:", /property="og:title"/.test(idx) && /property="og:image"/.test(idx));
 console.log("index has Twitter card:", /name="twitter:card"/.test(idx));
 console.log("index has robots index,follow:", /name="robots"\s+content="index,follow"/.test(idx));
+const css=read("styles.css"), js=read("app.js");
+console.log("brand logo is wired + animated:", /class:\s*"brand-logo"/.test(js) && /\.brand-logo[\s\S]*animation/.test(css) && /@keyframes candleUp/.test(css));
+console.log("canonical uses the real GitHub Pages URL (no placeholder):", /rel="canonical"\s+href="https:\/\/axcelsosa15\.github\.io\/trading-journal2\/"/.test(idx) && !/bitacora\.pages\.dev/.test(idx));
 console.log("WEB ASSETS SMOKE OK");

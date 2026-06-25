@@ -84,3 +84,16 @@ body { padding-bottom: env(safe-area-inset-bottom); }
     scroll-behavior: auto !important;
   }
 }
+
+/* Animated brand logo: the two candlesticks gently "tick" like a live chart
+   (green grows while red eases down), and speed up + lift on hover. transform-box
+   keeps each scale inside its own rect. Reduced-motion is honoured by the rule
+   above. */
+.brand-logo svg rect { transform-box: fill-box; transform-origin: center; }
+.brand-logo svg rect[fill="#16915B"] { animation: candleUp 2.4s ease-in-out infinite; }
+.brand-logo svg rect[fill="#D6483B"] { animation: candleDown 2.4s ease-in-out infinite; }
+@keyframes candleUp { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(1.2); } }
+@keyframes candleDown { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.84); } }
+.brand-logo { transition: transform .25s ease; }
+.brand-logo:hover { transform: scale(1.08) rotate(-3deg); }
+.brand-logo:hover svg rect { animation-duration: .8s; }
