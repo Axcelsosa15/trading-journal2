@@ -382,6 +382,15 @@
     }
   }
   function logout() { SB.auth.signOut(); }
+  // ---------- theme (light / dark) ----------
+  function getTheme() { try { return localStorage.getItem("bitacora_theme") === "dark" ? "dark" : "light"; } catch (e) { return "light"; } }
+  function applyTheme(t) { try { document.documentElement.setAttribute("data-theme", t); } catch (e) { } }
+  function initTheme() { applyTheme(getTheme()); }
+  function toggleTheme() {
+    var next = getTheme() === "dark" ? "light" : "dark";
+    try { localStorage.setItem("bitacora_theme", next); } catch (e) { }
+    applyTheme(next); render();
+  }
 
   // ---------- MFA (TOTP 2FA) ----------
   function hasMfaApi() { return SB.auth && SB.auth.mfa; }
@@ -1473,6 +1482,10 @@
         h("div", { style: "display:flex;align-items:center;gap:9px;padding:4px 6px;" },
           h("div", { style: "width:28px;height:28px;border-radius:50%;background:#16181C;color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:none;" }, (state.user.email || "?").charAt(0).toUpperCase()),
           h("div", { style: "min-width:0;flex:1;" }, h("div", { style: "font-size:12px;color:#54514A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" }, state.user.email)),
+          h("button", { title: getTheme() === "dark" ? "Modo claro" : "Modo oscuro", onClick: toggleTheme, style: "width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#807B72;flex:none;", hoverBg: "#FAF8F4" },
+            icon(getTheme() === "dark"
+              ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>'
+              : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>')),
           h("button", { title: "Cerrar sesión", onClick: logout, style: "width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#807B72;flex:none;", hoverBg: "#FAF8F4" },
             icon('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>'))))
     );
@@ -2908,5 +2921,6 @@
     });
   }
 
+  initTheme();
   render();
 })();
