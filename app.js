@@ -799,12 +799,39 @@
 
   // ---------- trade screenshots (private Supabase Storage) ----------
   var SHOT_BUCKET = "trade-screenshots";
+  // Downscale + re-encode an image before upload so screenshots don't eat the
+  // storage quota (typically 5–10× smaller). Returns the compressed File, or the
+  // original unchanged on any failure, for animated GIFs, or where the browser
+  // image APIs are unavailable (e.g. headless tests).
+  async function compressImage(file) {
+    try {
+      if (!file || typeof file.type !== "string") return file;
+      if (file.type === "image/gif") return file; // keep animation intact
+      if (typeof createImageBitmap !== "function" || typeof document === "undefined" || !document.createElement) return file;
+      var bmp;
+      try { bmp = await createImageBitmap(file); } catch (e) { return file; }
+      var MAX = 1600, scale = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
+      var w = Math.max(1, Math.round(bmp.width * scale)), h = Math.max(1, Math.round(bmp.height * scale));
+      var canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      var ctx = canvas.getContext && canvas.getContext("2d");
+      if (!ctx) { if (bmp.close) bmp.close(); return file; }
+      ctx.drawImage(bmp, 0, 0, w, h);
+      if (bmp.close) bmp.close();
+      var blob = await new Promise(function (res) { canvas.toBlob ? canvas.toBlob(res, "image/jpeg", 0.82) : res(null); });
+      if (!blob || (file.size && blob.size >= file.size)) return file; // keep original if smaller
+      try { return new File([blob], "shot.jpg", { type: "image/jpeg" }); }
+      catch (e) { return blob; } // older browsers without the File constructor
+    } catch (e) { return file; }
+  }
   // Upload an image under the user's own folder (RLS scopes access per uid).
   // Returns the stored object path, or null if it couldn't be uploaded.
   async function uploadScreenshot(file) {
     try {
       if (!file || !state.user || !isOnline()) return null;
-      var ext = (String(file.name || "img").split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5) || "png";
+      file = await compressImage(file);
+      var typeExt = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
+      var ext = typeExt[file.type] || (String(file.name || "img").split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5) || "png";
       var path = state.user.id + "/" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9) + "." + ext;
       var up = await SB.storage.from(SHOT_BUCKET).upload(path, file, { contentType: file.type || undefined, upsert: false });
       if (up.error) return null;
