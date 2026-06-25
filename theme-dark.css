@@ -1,0 +1,35 @@
+/* ============================================================================
+   Dark mode v1 — additive and reversible. Activates only under
+   <html data-theme="dark">; light mode is completely untouched.
+
+   Strategy: a hue-preserving inversion of the whole app (invert + hue-rotate
+   180°) so the warm paper UI becomes a deep dark surface while green/red/blue
+   accents keep their hue and only flip lightness. Real photos (trade
+   screenshots) are inverted back so they render with true colours.
+
+   This is the full-coverage v1; a hand-tuned token palette can refine exact
+   tones later. Loaded after styles.css so it wins.
+   ============================================================================ */
+
+html[data-theme="dark"] {
+  background: #0c0e12;
+  color-scheme: dark;
+}
+
+/* Invert the app + modal layers (both are children of <body>). The original
+   light backgrounds become deep darks automatically. */
+html[data-theme="dark"] body {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+/* Re-invert raster media so screenshots/photos look normal, not negative. */
+html[data-theme="dark"] img,
+html[data-theme="dark"] video,
+html[data-theme="dark"] [data-keep-color] {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+/* A calmer scrollbar thumb once everything is inverted. */
+html[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: #b4aea3;
+}

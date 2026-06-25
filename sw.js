@@ -19,6 +19,7 @@ var SHELL = [
   "./index.html",
   "./app.js",
   "./styles.css",
+  "./theme-dark.css",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
