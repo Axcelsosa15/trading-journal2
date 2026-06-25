@@ -42,6 +42,33 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .dc-modal { animation: popIn .18s ease both; }
 .view-fade { animation: viewFade .2s ease both; }
 
+/* ---------- Premium micro-animations ----------
+   Hover/transition-based only (no entrance keyframes on re-rendered nodes, which
+   would replay on every state change). Reduced-motion is honoured globally. */
+
+/* Sidebar nav: a gentle slide as you hover each item. */
+.side nav button { transition: background .15s ease, color .15s ease, transform .16s cubic-bezier(.2, .8, .2, 1); }
+.side nav button:hover { transform: translateX(3px); }
+
+/* Content cards: a soft lift + deeper shadow on hover. */
+[style*="background:#fff"][style*="border-radius:14px"],
+[style*="background:#fff"][style*="border-radius:13px"],
+[style*="background:#FFFFFF"][style*="border-radius:14px"] {
+  transition: transform .22s cubic-bezier(.2, .8, .2, 1), box-shadow .22s ease, border-color .2s ease;
+}
+[style*="background:#fff"][style*="border-radius:14px"]:hover,
+[style*="background:#fff"][style*="border-radius:13px"]:hover,
+[style*="background:#FFFFFF"][style*="border-radius:14px"]:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 32px -18px rgba(22, 24, 28, 0.30);
+}
+
+/* Inputs: animate the border + focus glow smoothly. */
+input, select, textarea { transition: border-color .16s ease, box-shadow .16s ease, background .16s ease; }
+
+/* Trade rows and list items (rendered as buttons) ease their hover highlight. */
+.trades-scroll button { transition: background .14s ease, transform .12s ease; }
+
 /* Respect device safe areas (notches) when installed as a PWA. */
 body { padding-bottom: env(safe-area-inset-bottom); }
 
