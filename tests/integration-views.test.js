@@ -5,6 +5,7 @@ const fs=require("fs");const {JSDOM}=require("jsdom");const vm=require("vm");
 const dom=new JSDOM(fs.readFileSync("index.html","utf8"),{runScripts:"outside-only",pretendToBeVisual:true,url:"https://example.com/"});
 const {window}=dom; const d=window.document;
 const jsErrors=[]; window.addEventListener("error",e=>jsErrors.push(e.message||String(e.error||e)));
+window.addEventListener("unhandledrejection",e=>jsErrors.push("rejection: "+((e.reason&&e.reason.message)||String(e.reason))));
 // Build a realistic dataset so charts/metrics have something to compute.
 const SYM=["MES","MNQ","M2K"], SET=["Ruptura","Reversión","Pullback","EMA/VWAP"], EMO=["Tranquilo","Confiado","Ansioso","FOMO"];
 const TRADES=[]; for(let i=0;i<30;i++){const win=i%2===0; const side=i%3===0?"short":"long"; const pnl=(win?1:-1)*(40+i*3);
@@ -23,17 +24,24 @@ window.supabase={createClient:()=>({auth:{onAuthStateChange:cb=>({data:{subscrip
 vm.runInContext(fs.readFileSync("app.js","utf8"),dom.getInternalVMContext(),{filename:"app.js"});
 function btn(text){return [...d.querySelectorAll("aside button, .side button, nav button")].find(b=>b.textContent.replace(/\s+/g," ").trim().startsWith(text));}
 const VIEWS=["Resumen","Operaciones","Calendario","Analítica","Insights","Estadísticas","Correlaciones","Diario","Cuentas","Ajustes"];
+function bodyText(){ // the actual view body, not the shared header/shell
+  const sc=d.querySelector("main .dc-scroll"); return sc?sc.textContent.replace(/\s+/g," ").trim():"";
+}
 setTimeout(()=>{try{
   console.log("App booted with data (logged in shell):", !!d.querySelector("main") && !!d.querySelector("aside, .side"));
-  let allOk=true, failed=[];
+  const missing=[], empty=[];
   VIEWS.forEach(function(label){
-    const nb=btn(label); if(nb)nb.click();
-    const main=d.querySelector("main"); const txt=(main?main.textContent:"");
-    const ok = !!main && txt.length>20 && txt.indexOf("error inesperado")<0;
-    if(!ok){allOk=false; failed.push(label);}
+    const nb=btn(label);
+    if(!nb){missing.push(label);return;}      // a missing button is a real failure
+    nb.click();
+    if(bodyText().length<20) empty.push(label); // measure the view body, not the shell
   });
-  console.log("Every view renders without the error fallback:", allOk, failed.length?("(failed: "+failed.join(", ")+")"):"");
-  console.log("No uncaught JS errors during the walk:", jsErrors.length===0, jsErrors.slice(0,3).join(" | "));
-  console.log("Trades view shows the 30-trade dataset:", (function(){const nb=btn("Operaciones");if(nb)nb.click();return d.querySelector("main").textContent.indexOf("30")>=0;})());
+  console.log("All 10 sidebar buttons present:", missing.length===0, missing.join(","));
+  console.log("Every view body renders real content:", empty.length===0, empty.join(","));
+  // The resilience fallback is appended anywhere in the document, so scan it all.
+  console.log("No fatal-error fallback anywhere:", d.body.textContent.indexOf("error inesperado")<0);
+  console.log("No uncaught errors or rejections during the walk:", jsErrors.length===0, jsErrors.slice(0,3).join(" | "));
+  const ob=btn("Operaciones"); if(ob)ob.click();
+  console.log("Trades view body reflects the 30-trade dataset:", bodyText().indexOf("30")>=0);
   console.log("INTEGRATION VIEWS SMOKE OK");
 }catch(e){console.log("ERR",e.message,e.stack);}},260);
