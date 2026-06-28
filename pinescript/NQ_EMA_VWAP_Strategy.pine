@@ -1,0 +1,182 @@
+//@version=6
+// =============================================================================
+// Sistema de Trading NQ — EMA/VWAP (v1.0)
+// Backtest del Protocolo oficial v1.0:
+//   EMA 3/10/20/55/200 + VWAP + Volumen
+// Reglas (NO optimizar durante 200 trades):
+//   - Dirección: EMA200
+//   - Estructura: EMA20 > EMA55 > EMA200 (long) / inverso (short)
+//   - Filtro institucional: VWAP
+//   - Participación: Volumen actual > SMA20(Volumen)
+//   - Pullback: el precio toca EMA20 o EMA55 (cuerpo o mecha)
+//   - Trigger: EMA3 cruza EMA10 -> entrada al cierre de la vela del cruce
+//   - Stop: Long = mínimo últimas 5 velas / Short = máximo últimas 5 velas
+//   - Salidas: TP1 1R (50%), TP2 2R (50%)
+// =============================================================================
+strategy(title               = "NQ EMA/VWAP Backtest v1.0",
+         shorttitle          = "NQ EMA/VWAP v1.0",
+         overlay             = true,
+         pyramiding          = 0,
+         initial_capital     = 100000,
+         default_qty_type    = strategy.fixed,
+         default_qty_value   = 1,
+         calc_on_every_tick  = false,
+         process_orders_on_close = true,
+         commission_type     = strategy.commission.cash_per_order,
+         commission_value    = 0)
+
+// ----------------------------------------------------------------------------
+// Inputs
+// ----------------------------------------------------------------------------
+grpEma   = "EMAs"
+lenEma3   = input.int(3,   "EMA 3 (trigger)",        minval = 1, group = grpEma)
+lenEma10  = input.int(10,  "EMA 10 (confirmación)",  minval = 1, group = grpEma)
+lenEma20  = input.int(20,  "EMA 20 (pullback)",      minval = 1, group = grpEma)
+lenEma55  = input.int(55,  "EMA 55 (valor)",         minval = 1, group = grpEma)
+lenEma200 = input.int(200, "EMA 200 (dirección)",    minval = 1, group = grpEma)
+
+grpFilt  = "Filtros"
+volLen        = input.int(20, "SMA Volumen", minval = 1, group = grpFilt)
+pullbackBars  = input.int(5,  "Ventana de pullback (velas)", minval = 1, group = grpFilt, tooltip = "Cuántas velas atrás (incl. la actual) se admite el toque a EMA20/EMA55 antes del cruce EMA3/EMA10.")
+useVwapFilter = input.bool(true, "Usar filtro VWAP", group = grpFilt)
+useVolFilter  = input.bool(true, "Usar filtro de Volumen", group = grpFilt)
+
+grpRisk  = "Gestión / Salidas"
+slLookback = input.int(5,   "Stop: lookback (velas)", minval = 1, group = grpRisk, tooltip = "Long = mínimo de las últimas N velas. Short = máximo de las últimas N velas.")
+tp1R       = input.float(1.0, "TP1 (R)", step = 0.5, group = grpRisk)
+tp2R       = input.float(2.0, "TP2 (R)", step = 0.5, group = grpRisk)
+tp1Pct     = input.float(50, "Cerrar en TP1 (%)", minval = 1, maxval = 100, group = grpRisk)
+
+grpDir   = "Dirección permitida"
+allowLong  = input.bool(true, "Permitir Long",  group = grpDir)
+allowShort = input.bool(true, "Permitir Short", group = grpDir)
+
+grpSes   = "Sesión (filtro horario opcional)"
+useSession  = input.bool(false, "Filtrar por sesión", group = grpSes)
+sessionTime = input.session("0930-1600", "Sesión (hora del exchange)", group = grpSes)
+
+grpDate  = "Rango de fechas"
+useDate   = input.bool(false, "Filtrar por rango de fechas", group = grpDate)
+startDate = input.time(timestamp("2024-01-01 00:00"), "Desde", group = grpDate)
+endDate   = input.time(timestamp("2026-12-31 23:59"), "Hasta", group = grpDate)
+
+// ----------------------------------------------------------------------------
+// Indicadores
+// ----------------------------------------------------------------------------
+ema3   = ta.ema(close, lenEma3)
+ema10  = ta.ema(close, lenEma10)
+ema20  = ta.ema(close, lenEma20)
+ema55  = ta.ema(close, lenEma55)
+ema200 = ta.ema(close, lenEma200)
+
+// VWAP (se reinicia por sesión, filtro institucional)
+vwapValue = ta.vwap(hlc3)
+
+// Volumen
+volSma   = ta.sma(volume, volLen)
+volOk    = not useVolFilter or (volume > volSma)
+
+// ----------------------------------------------------------------------------
+// Helpers de sesión / fechas
+// ----------------------------------------------------------------------------
+inSession = not useSession or not na(time(timeframe.period, sessionTime))
+inDate    = not useDate or (time >= startDate and time <= endDate)
+tradable  = inSession and inDate
+
+// ----------------------------------------------------------------------------
+// Pullback: ¿la vela tocó (cuerpo o mecha) la EMA20 o EMA55?
+// El toque = la EMA queda dentro del rango high-low de la vela.
+// ----------------------------------------------------------------------------
+touch20 = low <= ema20 and high >= ema20
+touch55 = low <= ema55 and high >= ema55
+touched = touch20 or touch55
+
+// ¿Hubo un toque en las últimas N velas (incluida la actual)?
+recentPullback = ta.barssince(touched) < pullbackBars
+
+// ----------------------------------------------------------------------------
+// Condiciones LONG (todas deben cumplirse)
+// ----------------------------------------------------------------------------
+longTrend     = close > ema200
+longStructure = ema20 > ema55 and ema55 > ema200
+longVwap      = not useVwapFilter or (close > vwapValue)
+longTrigger   = ta.crossover(ema3, ema10)
+
+longSetup = allowLong and tradable and longTrend and longStructure and longVwap and volOk and recentPullback and longTrigger
+
+// ----------------------------------------------------------------------------
+// Condiciones SHORT (inverso exacto)
+// ----------------------------------------------------------------------------
+shortTrend     = close < ema200
+shortStructure = ema20 < ema55 and ema55 < ema200
+shortVwap      = not useVwapFilter or (close < vwapValue)
+shortTrigger   = ta.crossunder(ema3, ema10)
+
+shortSetup = allowShort and tradable and shortTrend and shortStructure and shortVwap and volOk and recentPullback and shortTrigger
+
+// ----------------------------------------------------------------------------
+// Cálculo de Stop / Targets (en el momento de la entrada)
+// ----------------------------------------------------------------------------
+var float entryPrice = na
+var float stopPrice  = na
+var float tp1Price   = na
+var float tp2Price   = na
+var int   tradeDir   = 0   // 1 long, -1 short
+
+flat = strategy.position_size == 0
+
+if longSetup and flat
+    entryPrice := close
+    stopPrice  := ta.lowest(low, slLookback)
+    riskPts     = entryPrice - stopPrice
+    tp1Price   := entryPrice + tp1R * riskPts
+    tp2Price   := entryPrice + tp2R * riskPts
+    tradeDir   := 1
+    if riskPts > 0
+        strategy.entry("Long", strategy.long)
+
+if shortSetup and flat
+    entryPrice := close
+    stopPrice  := ta.highest(high, slLookback)
+    riskPts     = stopPrice - entryPrice
+    tp1Price   := entryPrice - tp1R * riskPts
+    tp2Price   := entryPrice - tp2R * riskPts
+    tradeDir   := -1
+    if riskPts > 0
+        strategy.entry("Short", strategy.short)
+
+// ----------------------------------------------------------------------------
+// Salidas: TP1 (parcial) + TP2 (resto), ambos con el mismo stop.
+// ----------------------------------------------------------------------------
+if strategy.position_size > 0 and tradeDir == 1
+    strategy.exit("TP1", from_entry = "Long", qty_percent = tp1Pct, limit = tp1Price, stop = stopPrice)
+    strategy.exit("TP2", from_entry = "Long", limit = tp2Price, stop = stopPrice)
+
+if strategy.position_size < 0 and tradeDir == -1
+    strategy.exit("TP1", from_entry = "Short", qty_percent = tp1Pct, limit = tp1Price, stop = stopPrice)
+    strategy.exit("TP2", from_entry = "Short", limit = tp2Price, stop = stopPrice)
+
+// ----------------------------------------------------------------------------
+// Plot indicadores
+// ----------------------------------------------------------------------------
+plot(ema3,   "EMA 3",   color = color.new(color.aqua,   0), linewidth = 1)
+plot(ema10,  "EMA 10",  color = color.new(color.yellow, 0), linewidth = 1)
+plot(ema20,  "EMA 20",  color = color.new(color.orange, 0), linewidth = 1)
+plot(ema55,  "EMA 55",  color = color.new(color.fuchsia,0), linewidth = 1)
+plot(ema200, "EMA 200", color = color.new(color.red,    0), linewidth = 2)
+plot(vwapValue, "VWAP", color = color.new(color.white,  0), linewidth = 2, style = plot.style_circles)
+
+// Marcas de entrada
+plotshape(longSetup  and flat, title = "Long",  style = shape.triangleup,   location = location.belowbar, color = color.new(color.green, 0), size = size.small)
+plotshape(shortSetup and flat, title = "Short", style = shape.triangledown, location = location.abovebar, color = color.new(color.red,   0), size = size.small)
+
+// Niveles activos
+plot(strategy.position_size != 0 ? stopPrice : na, "Stop", color = color.new(color.red,   0), style = plot.style_linebr, linewidth = 1)
+plot(strategy.position_size != 0 ? tp1Price  : na, "TP1",  color = color.new(color.lime,  0), style = plot.style_linebr, linewidth = 1)
+plot(strategy.position_size != 0 ? tp2Price  : na, "TP2",  color = color.new(color.green, 0), style = plot.style_linebr, linewidth = 1)
+
+// ----------------------------------------------------------------------------
+// Alertas
+// ----------------------------------------------------------------------------
+alertcondition(longSetup  and flat, title = "Entrada LONG",  message = "NQ EMA/VWAP: señal LONG")
+alertcondition(shortSetup and flat, title = "Entrada SHORT", message = "NQ EMA/VWAP: señal SHORT")
