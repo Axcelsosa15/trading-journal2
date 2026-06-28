@@ -1,12 +1,11 @@
 //@version=6
 // =============================================================================
-// Sistema de Trading NQ — EMA/VWAP (v1.0)
+// Sistema de Trading NQ — EMA (v1.0, sin VWAP)
 // Backtest del Protocolo oficial v1.0:
-//   EMA 3/10/20/55/200 + VWAP + Volumen
+//   EMA 3/10/20/55/200 + Volumen
 // Reglas (NO optimizar durante 200 trades):
 //   - Dirección: EMA200
 //   - Estructura: EMA20 > EMA55 > EMA200 (long) / inverso (short)
-//   - Filtro institucional: VWAP
 //   - Participación: Volumen actual > SMA20(Volumen)
 //   - Pullback: el precio toca EMA20 o EMA55 (cuerpo o mecha)
 //   - Trigger: EMA3 cruza EMA10 -> entrada al cierre de la vela del cruce
@@ -38,7 +37,6 @@ lenEma200 = input.int(200, "EMA 200 (dirección)",    minval = 1, group = grpEma
 grpFilt  = "Filtros"
 volLen        = input.int(20, "SMA Volumen", minval = 1, group = grpFilt)
 pullbackBars  = input.int(5,  "Ventana de pullback (velas)", minval = 1, group = grpFilt, tooltip = "Cuántas velas atrás (incl. la actual) se admite el toque a EMA20/EMA55 antes del cruce EMA3/EMA10.")
-useVwapFilter = input.bool(true, "Usar filtro VWAP", group = grpFilt)
 useVolFilter  = input.bool(true, "Usar filtro de Volumen", group = grpFilt)
 
 grpRisk  = "Gestión / Salidas"
@@ -70,9 +68,6 @@ ema20  = ta.ema(close, lenEma20)
 ema55  = ta.ema(close, lenEma55)
 ema200 = ta.ema(close, lenEma200)
 
-// VWAP (se reinicia por sesión, filtro institucional)
-vwapValue = ta.vwap(hlc3)
-
 // Volumen
 volSma   = ta.sma(volume, volLen)
 volOk    = not useVolFilter or (volume > volSma)
@@ -100,20 +95,18 @@ recentPullback = ta.barssince(touched) < pullbackBars
 // ----------------------------------------------------------------------------
 longTrend     = close > ema200
 longStructure = ema20 > ema55 and ema55 > ema200
-longVwap      = not useVwapFilter or (close > vwapValue)
 longTrigger   = ta.crossover(ema3, ema10)
 
-longSetup = allowLong and tradable and longTrend and longStructure and longVwap and volOk and recentPullback and longTrigger
+longSetup = allowLong and tradable and longTrend and longStructure and volOk and recentPullback and longTrigger
 
 // ----------------------------------------------------------------------------
 // Condiciones SHORT (inverso exacto)
 // ----------------------------------------------------------------------------
 shortTrend     = close < ema200
 shortStructure = ema20 < ema55 and ema55 < ema200
-shortVwap      = not useVwapFilter or (close < vwapValue)
 shortTrigger   = ta.crossunder(ema3, ema10)
 
-shortSetup = allowShort and tradable and shortTrend and shortStructure and shortVwap and volOk and recentPullback and shortTrigger
+shortSetup = allowShort and tradable and shortTrend and shortStructure and volOk and recentPullback and shortTrigger
 
 // ----------------------------------------------------------------------------
 // Cálculo de Stop / Targets (en el momento de la entrada)
@@ -165,7 +158,6 @@ plot(ema10,  "EMA 10",  color = color.new(color.yellow, 0), linewidth = 1)
 plot(ema20,  "EMA 20",  color = color.new(color.orange, 0), linewidth = 1)
 plot(ema55,  "EMA 55",  color = color.new(color.fuchsia,0), linewidth = 1)
 plot(ema200, "EMA 200", color = color.new(color.red,    0), linewidth = 2)
-plot(vwapValue, "VWAP", color = color.new(color.white,  0), linewidth = 2, style = plot.style_circles)
 
 // Marcas de entrada
 plotshape(longSetup  and flat, title = "Long",  style = shape.triangleup,   location = location.belowbar, color = color.new(color.green, 0), size = size.small)
