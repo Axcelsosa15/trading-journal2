@@ -1343,7 +1343,7 @@
   function setupStyleOf() { return "display:inline-flex;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;background:#F1EDE5;color:#54514A;"; }
   function emoStyleOf(em) {
     var map = { Confiado: "#E8F3EC;color:#16915B", Tranquilo: "#EAF0F7;color:#3D6FB0", Ansioso: "#FBF1E6;color:#C77B2A", FOMO: "#FBEAE7;color:#D6483B" };
-    return "display:inline-flex;padding:4px 11px;border-radius:20px;font-size:12px;font-weight:600;background:#" + (map[em] || "F1EDE5;color:#54514A");
+    return "display:inline-flex;padding:4px 11px;border-radius:20px;font-size:12px;font-weight:600;background:" + (map[em] || "#F1EDE5;color:#54514A");
   }
   function buildRow(t) {
     return {
@@ -1587,11 +1587,11 @@
   var KIND_LABEL = { fondeo: "Fondeo", live: "Live", demo: "Demo" };
   function kindStyle(kind) {
     var map = { fondeo: "#EAF0F7;color:#3D6FB0", live: "#E8F3EC;color:#16915B", demo: "#F1EDE5;color:#54514A" };
-    return "display:inline-flex;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:#" + (map[kind] || "F1EDE5;color:#54514A");
+    return "display:inline-flex;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:" + (map[kind] || "#F1EDE5;color:#54514A");
   }
   function statusStyle(status) {
     var map = { activa: "#E8F3EC;color:#16915B", aprobada: "#E8F3EC;color:#16915B", quemada: "#FBEAE7;color:#D6483B", pausada: "#FBF1E6;color:#C77B2A", cerrada: "#F1EDE5;color:#54514A" };
-    return "display:inline-flex;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:#" + (map[status] || "F1EDE5;color:#54514A");
+    return "display:inline-flex;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:" + (map[status] || "#F1EDE5;color:#54514A");
   }
   function accountsView() {
     var topBar = h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;" },
@@ -2366,7 +2366,7 @@
     var cards = state.journal.map(function (j) {
       var dayTrades = state.trades.filter(function (t) { return t.date === j.date; });
       var dayPnl = dayTrades.reduce(function (a, t) { return a + t.pnl; }, 0);
-      var moodStyle = "display:inline-flex;padding:4px 11px;border-radius:20px;font-size:12px;font-weight:600;background:#" + (moodColors[j.mood] || "F1EDE5;color:#54514A");
+      var moodStyle = "display:inline-flex;padding:4px 11px;border-radius:20px;font-size:12px;font-weight:600;background:" + (moodColors[j.mood] || "#F1EDE5;color:#54514A");
       var tradeChips = dayTrades.length ? h("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;padding-top:13px;border-top:1px solid #F3EFE7;" },
         h("span", { style: "font-size:11px;color:#A39E94;align-self:center;margin-right:2px;" }, dayTrades.length + " op. ese día:"),
         dayTrades.map(function (t) {
