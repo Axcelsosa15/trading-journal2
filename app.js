@@ -2090,6 +2090,20 @@
       if (hE > lE + Math.max(15, Math.abs(overall) * 0.3)) out.push({ sev: "good", title: "Tu lectura de mercado funciona", detail: "Tus operaciones de alta convicción (4–5★) promedian " + signed(Math.round(hE)) + "/op frente a " + signed(Math.round(lE)) + " en las de baja (1–2★)." });
       else if (hE <= lE) out.push({ sev: "warn", title: "Tu convicción no predice resultados", detail: "Las que marcaste de alta convicción (" + signed(Math.round(hE)) + "/op) no superan a las de baja (" + signed(Math.round(lE)) + "). Revisa qué te da falsa confianza." });
     }
+    // Discipline: do the days you complete the pre-trade checklist trade better?
+    var checkDays = {};
+    state.journal.forEach(function (j) { if (isChecklistEntry(j)) checkDays[j.date] = true; });
+    if (Object.keys(checkDays).length) {
+      var clT = T.filter(function (t) { return checkDays[t.date]; });
+      var ncT = T.filter(function (t) { return !checkDays[t.date]; });
+      if (clT.length >= 4 && ncT.length >= 4) {
+        var eCl = exp(clT), eNc = exp(ncT);
+        if (eCl > eNc + band)
+          out.push({ sev: "good", title: "La checklist te está funcionando", detail: "Los días que completas tu checklist antes de operar promedias " + signed(Math.round(eCl)) + "/op frente a " + signed(Math.round(eNc)) + " los días que no (" + clT.length + " vs " + ncT.length + " ops). Mantén el hábito." });
+        else if (eCl < eNc - band)
+          out.push({ sev: "warn", title: "Cumples la checklist pero no se nota", detail: "Los días con checklist rinden " + signed(Math.round(eCl)) + "/op frente a " + signed(Math.round(eNc)) + " sin ella (" + clT.length + " vs " + ncT.length + " ops). ¿La marcas de verdad o solo por trámite? Revisa si sigues lo que repasas." });
+      }
+    }
     var order = { bad: 0, warn: 1, good: 2, info: 3 };
     out.sort(function (a, b) { return order[a.sev] - order[b.sev]; });
     return out;
@@ -2118,7 +2132,7 @@
     var counts = ins.reduce(function (a, i) { a[i.sev] = (a[i.sev] || 0) + 1; return a; }, {});
     var header = h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px 20px;" },
       h("div", { style: "font-size:15px;font-weight:600;margin-bottom:4px;" }, "Patrones detectados en tus " + state.trades.length + " operaciones"),
-      h("div", { style: "font-size:12.5px;color:#807B72;" }, "Análisis automático de tus sesgos por día, hora, setup, emoción y comportamiento. " + ((counts.bad || 0) + (counts.warn || 0)) + " a vigilar · " + (counts.good || 0) + " fortaleza(s)."));
+      h("div", { style: "font-size:12.5px;color:#807B72;" }, "Análisis automático de tus sesgos por día, hora, setup, emoción, disciplina y comportamiento. " + ((counts.bad || 0) + (counts.warn || 0)) + " a vigilar · " + (counts.good || 0) + " fortaleza(s)."));
     return wrap([header].concat(ins.map(insightCard)));
   }
 
