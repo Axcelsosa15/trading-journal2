@@ -51,9 +51,10 @@ grpDir   = "Dirección permitida"
 allowLong  = input.bool(true, "Permitir Long",  group = grpDir)
 allowShort = input.bool(true, "Permitir Short", group = grpDir)
 
-grpSes   = "Sesión (filtro horario opcional)"
-useSession  = input.bool(false, "Filtrar por sesión", group = grpSes)
-sessionTime = input.session("0930-1600", "Sesión (hora del exchange)", group = grpSes)
+grpSes   = "Sesión (filtro horario)"
+useSession  = input.bool(true, "Filtrar por sesión", group = grpSes)
+sessionTime = input.session("1000-1130", "Sesión AM (NY)", group = grpSes)
+sessionTz   = input.string("America/New_York", "Zona horaria de la sesión", group = grpSes, tooltip = "La ventana 1000-1130 se evalúa en esta zona horaria, sin importar la zona del gráfico.")
 
 grpDate  = "Rango de fechas"
 useDate   = input.bool(false, "Filtrar por rango de fechas", group = grpDate)
@@ -79,7 +80,7 @@ volOk    = not useVolFilter or (volume > volSma)
 // ----------------------------------------------------------------------------
 // Helpers de sesión / fechas
 // ----------------------------------------------------------------------------
-inSession = not useSession or not na(time(timeframe.period, sessionTime))
+inSession = not useSession or not na(time(timeframe.period, sessionTime, sessionTz))
 inDate    = not useDate or (time >= startDate and time <= endDate)
 tradable  = inSession and inDate
 
