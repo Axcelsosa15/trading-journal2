@@ -29,6 +29,16 @@ setTimeout(()=>{try{
   console.log("Stats sections present:", missing.length===0, missing.length?("MISSING:"+missing):"");
   // numeric sanity: PF should be 400/100 = 4.00 ; net +300 ; winrate 60%
   console.log("PF 4.00 shown:", /4\.00/.test(txt), "| net +$300:", /\+\$300/.test(txt), "| 60% WR:", /60%/.test(txt));
+  // Hand-computed for pnls [+100,+100,-50,-50,+200]: expectancy=300/5=$60; maxDD=$100;
+  // recovery=300/100=3.00; median=$100; payoff=133.3/50=2.67; Sharpe=60/108.40=0.55;
+  // Sortino=60/31.62=1.90; Kelly=0.6-0.4/2.667=0.45 -> 45%.
+  console.log("Expectancy +$60:", txt.includes("+$60"));
+  console.log("Max drawdown −$100:", txt.includes("−$100"));
+  console.log("Recovery factor 3.00:", txt.includes("3.00"));
+  console.log("Median +$100:", txt.includes("+$100"));
+  console.log("Payoff 2.67:", txt.includes("2.67"));
+  console.log("Sharpe 0.55 & Sortino 1.90:", txt.includes("0.55") && txt.includes("1.90"));
+  console.log("Kelly 45% (excl. breakevens):", txt.includes("45%"));
   // histogram + drawdown svg present
   console.log("SVGs rendered:", d.querySelectorAll("main svg").length>=2);
   // per-trade R in detail drawer: open first trade

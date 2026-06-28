@@ -1125,12 +1125,15 @@
     var rUnit = rUnitOf(rows);
     var rMul = rUnit > 0 ? pnls.map(function (x) { return x / rUnit; }) : pnls.map(function () { return 0; });
     var expR = mean(rMul), sdR = stdev(rMul);
-    var sqn = (n >= 2 && sdR > 0) ? (expR / sdR) * Math.sqrt(n) : 0;
+    // SQN100 (Van Tharp): cap the sample at 100 so a huge trade count doesn't inflate it.
+    var sqn = (n >= 2 && sdR > 0) ? (expR / sdR) * Math.sqrt(Math.min(n, 100)) : 0;
     var sd = stdev(pnls);
     var sharpe = sd > 0 ? mean(pnls) / sd : 0;
     var downside = Math.sqrt(mean(pnls.map(function (x) { var m = Math.min(x, 0); return m * m; })));
     var sortino = downside > 0 ? mean(pnls) / downside : 0;
-    var kelly = payoff > 0 && isFinite(payoff) ? (wr - (1 - wr) / payoff) : 0; if (kelly < 0) kelly = 0;
+    // Kelly uses win probability among decisive trades (exclude breakevens), W − (1−W)/R.
+    var wKelly = (wins.length + losses.length) ? wins.length / (wins.length + losses.length) : 0;
+    var kelly = payoff > 0 && isFinite(payoff) ? (wKelly - (1 - wKelly) / payoff) : 0; if (kelly < 0) kelly = 0;
     // streaks + drawdown over chronological equity
     var chrono = rows.slice().sort(byDateAsc);
     var maxW = 0, maxL = 0, cw = 0, cl = 0;
