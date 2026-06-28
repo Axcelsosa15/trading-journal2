@@ -392,7 +392,7 @@
     applyTheme(next); render();
   }
   // Build stamp so you can always tell which version you're running.
-  var APP_VERSION = "2026.06.25";
+  var APP_VERSION = "2026.06.28";
   // Force the freshest deploy: unregister the service worker, drop every cache,
   // then hard-reload. Cures a browser stuck on an old cached build.
   async function forceUpdate() {
@@ -1079,6 +1079,54 @@
   function closeJournalAdd() { state.showJournalAdd = false; state.journalEditId = null; renderModal(); }
   function openChecklist() { state.checkState = (state.settings.checklist || []).map(function () { return false; }); state.showChecklist = true; renderModal(); }
   function closeChecklist() { state.showChecklist = false; renderModal(); }
+  // Marker that identifies a journal entry auto-created from the pre-trade checklist,
+  // so we can connect "checklist days" to performance without a schema change.
+  var CHECKLIST_TAG = "Checklist pre-operación";
+  function isChecklistEntry(j) { return !!(j && typeof j.title === "string" && j.title.indexOf(CHECKLIST_TAG) === 0); }
+  // Save the completed pre-trade checklist into the diary automatically (one entry
+  // per day; re-opening it the same day updates that entry instead of duplicating).
+  async function saveChecklistToJournal() {
+    var items = state.settings.checklist || [];
+    var done = state.checkState.filter(Boolean).length;
+    var date = todayISO();
+    var lines = items.map(function (q, i) { return (state.checkState[i] ? "✓ " : "✗ ") + q; });
+    var title = CHECKLIST_TAG + " (" + done + "/" + items.length + ")";
+    var body = "Repaso del plan antes de operar:\n" + lines.join("\n");
+    var row = { date: date, mood: "Disciplinado", title: title, body: body, lesson: "" };
+    state.showChecklist = false;
+    var existing = state.journal.filter(function (j) { return j.date === date && isChecklistEntry(j); })[0];
+    if (existing) {
+      var isTmp = String(existing.id).slice(0, 4) === "tmp_";
+      if (!isTmp && isOnline()) {
+        try {
+          var up = await SB.from("journal").update(row).eq("id", existing.id).select().single();
+          if (up.error) throw up.error;
+          var u = coerceJournal(up.data);
+          state.journal = state.journal.map(function (j) { return j.id === u.id ? u : j; });
+          saveCache(); render(); return;
+        } catch (e) { /* fall through to local update */ }
+      }
+      // Offline or temp row: update the local copy (and its queued payload, if any).
+      state.journal = state.journal.map(function (j) { return j.id === existing.id ? coerceJournal(Object.assign({ id: existing.id }, row)) : j; });
+      if (isTmp) setOutbox(getOutbox().map(function (it) { return it.tempId === existing.id ? Object.assign({}, it, { row: row }) : it; }));
+      saveCache(); render(); return;
+    }
+    if (!isOnline()) {
+      var tid = "tmp_" + Date.now();
+      state.journal = [coerceJournal(Object.assign({ id: tid }, row))].concat(state.journal);
+      enqueue("journal", row, tid); saveCache(); render(); return;
+    }
+    try {
+      var res = await SB.from("journal").insert(row).select().single();
+      if (res.error) throw res.error;
+      state.journal = [coerceJournal(res.data)].concat(state.journal);
+    } catch (e) {
+      var tid2 = "tmp_" + Date.now();
+      state.journal = [coerceJournal(Object.assign({ id: tid2 }, row))].concat(state.journal);
+      enqueue("journal", row, tid2);
+    }
+    saveCache(); render();
+  }
 
   // ---------- metrics & grouping ----------
   function metrics() {
@@ -2416,6 +2464,7 @@
     applyFilter();
     return h("div", { style: "max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:14px;" },
       topBar, quick, filterBar,
+      checklistPerformancePanel(),
       moodPerformancePanel(moodColors),
       h("div", { style: "display:flex;flex-direction:column;gap:14px;" }, cards),
       lessonsLibrary());
@@ -2436,6 +2485,50 @@
       h("div", { style: "font-size:14px;font-weight:600;margin-bottom:2px;" }, "Ánimo vs. resultado"),
       h("div", { style: "font-size:12px;color:#A39E94;margin-bottom:10px;" }, "P&L medio del día según tu estado de ánimo"),
       barsEl(data, { w: 760, h: 220 }));
+  }
+  // Connection: did following the pre-trade checklist actually help? Compares the
+  // trades made on days a checklist was completed vs. days without one.
+  function checklistPerformancePanel() {
+    var checkDays = {};
+    state.journal.forEach(function (j) { if (isChecklistEntry(j)) checkDays[j.date] = true; });
+    var nChecklists = Object.keys(checkDays).length;
+    if (!nChecklists) return null;
+    function agg(list) {
+      var n = list.length;
+      var net = list.reduce(function (a, t) { return a + t.pnl; }, 0);
+      var w = list.filter(function (t) { return t.pnl > 0; }).length;
+      return { n: n, net: net, wr: n ? (w / n) * 100 : 0, avg: n ? net / n : 0 };
+    }
+    var withCl = agg(state.trades.filter(function (t) { return checkDays[t.date]; }));
+    var without = agg(state.trades.filter(function (t) { return !checkDays[t.date]; }));
+    if (!withCl.n && !without.n) return null; // no trades to compare yet
+    function col(label, a, accent) {
+      return h("div", { style: "flex:1;min-width:150px;background:#FBFAF7;border:1px solid #ECE7DD;border-radius:12px;padding:14px 16px;" },
+        h("div", { style: "font-size:12px;font-weight:600;color:" + accent + ";margin-bottom:10px;" }, label),
+        h("div", { style: "display:flex;flex-direction:column;gap:7px;" },
+          statLine("Operaciones", String(a.n)),
+          statLine("% acierto", a.n ? Math.round(a.wr) + "%" : "—"),
+          statLine("P&L medio/op.", a.n ? h("span", { style: pnlColor(a.avg) }, signed(a.avg)) : "—"),
+          statLine("P&L total", a.n ? h("span", { style: pnlColor(a.net) }, signed(a.net)) : "—")));
+    }
+    function statLine(k, v) {
+      return h("div", { style: "display:flex;align-items:baseline;justify-content:space-between;gap:10px;" },
+        h("span", { style: "font-size:12px;color:#807B72;" }, k),
+        h("span", { style: "font-size:13.5px;font-weight:600;font-family:'Geist Mono',monospace;" }, v));
+    }
+    var edge = (withCl.n && without.n) ? withCl.avg - without.avg : null;
+    var edgeNote = edge === null
+      ? "Aún no hay operaciones en ambos grupos para comparar."
+      : (edge >= 0
+        ? "Operas " + signed(edge) + " mejor por operación los días que completas tu checklist."
+        : "Por ahora operas " + signed(edge) + " por operación los días con checklist — revisa si lo cumples de verdad.");
+    return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;" },
+      h("div", { style: "font-size:14px;font-weight:600;margin-bottom:2px;" }, "Checklist vs. resultado"),
+      h("div", { style: "font-size:12px;color:#A39E94;margin-bottom:12px;" }, nChecklists + (nChecklists === 1 ? " día" : " días") + " con checklist completado"),
+      h("div", { style: "display:flex;gap:12px;flex-wrap:wrap;" },
+        col("Días con checklist", withCl, "#16915B"),
+        col("Días sin checklist", without, "#807B72")),
+      h("div", { style: "font-size:12.5px;color:#54514A;margin-top:12px;line-height:1.5;" }, edgeNote));
   }
   // All recorded lessons, newest first.
   function lessonsLibrary() {
@@ -2651,7 +2744,7 @@
 
   function checklistModal() {
     var items = state.settings.checklist || [];
-    var saveBtn = h("button", { onClick: closeChecklist }, "Todo listo, a operar");
+    var saveBtn = h("button", { onClick: saveChecklistToJournal }, "Guardar y operar");
     function refresh() {
       var all = items.length > 0 && state.checkState.every(function (x) { return x; });
       saveBtn.style.cssText = "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (all ? "background:#16915B;color:#fff;" : "background:#CFC9BD;color:#fff;cursor:not-allowed;");
@@ -2670,7 +2763,7 @@
       return rowEl;
     }) : [h("div", { style: "font-size:13px;color:#A39E94;text-align:center;padding:20px;" }, "No tienes preguntas en tu checklist. Añádelas en Ajustes.")];
     var body = [
-      h("div", { style: "font-size:12.5px;color:#807B72;margin-bottom:2px;" }, "Repasa tu plan antes de entrar. Marca cada punto."),
+      h("div", { style: "font-size:12.5px;color:#807B72;margin-bottom:2px;" }, "Repasa tu plan antes de entrar. Marca cada punto — al completarlo se guarda en tu diario."),
       h("div", { style: "display:flex;flex-direction:column;gap:8px;" }, rows),
     ];
     var footer = [

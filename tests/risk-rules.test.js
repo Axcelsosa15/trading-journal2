@@ -41,7 +41,7 @@ setTimeout(()=>{try{
   // toggle all checklist items -> save enabled
   const boxes=[...d.querySelectorAll("#modal-root button")].filter(b=>/plan|Riesgo/.test(b.textContent));
   boxes.forEach(b=>click(b));
-  const ready=[...d.querySelectorAll("#modal-root button")].find(b=>/Todo listo/.test(b.textContent));
+  const ready=[...d.querySelectorAll("#modal-root button")].find(b=>/Guardar y operar/.test(b.textContent));
   console.log("Checklist ready enabled:", !ready.disabled);
   click(ready);
   // settings view
