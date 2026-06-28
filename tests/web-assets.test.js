@@ -21,5 +21,6 @@ console.log("index has robots index,follow:", /name="robots"\s+content="index,fo
 const css=read("styles.css"), js=read("app.js");
 console.log("brand logo is wired + animated:", /class:\s*"brand-logo"/.test(js) && /\.brand-logo[\s\S]*animation/.test(css) && /@keyframes candleUp/.test(css));
 console.log("premium design pass present:", /backdrop-filter/.test(css) && /Premium design pass/.test(css) && /button\[style\*="background:#16181C"\]/.test(css));
+console.log("no double-# inline backgrounds (badge colors valid):", !/background:#"\s*\+/.test(js));
 console.log("canonical uses the real GitHub Pages URL (no placeholder):", /rel="canonical"\s+href="https:\/\/axcelsosa15\.github\.io\/trading-journal2\/"/.test(idx) && !/bitacora\.pages\.dev/.test(idx));
 console.log("WEB ASSETS SMOKE OK");
