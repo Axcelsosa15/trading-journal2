@@ -14,6 +14,10 @@ console.log("security.txt has Contact + Expires:", /Contact:\s*mailto:/.test(sec
   console.log("legal page valid ("+f+"):", ok);
 });
 const idx=read("index.html");
+// CSP must allow Supabase Storage images, or trade screenshots (loaded from
+// signed supabase.co URLs) are silently blocked by the browser and never render.
+const cspImg=(idx.match(/img-src ([^;]*)/)||[,""])[1];
+console.log("CSP img-src allows Supabase screenshots:", /supabase\.co/.test(cspImg) && /'self'/.test(cspImg) && /data:/.test(cspImg));
 console.log("index has canonical:", /rel="canonical"/.test(idx));
 console.log("index has Open Graph:", /property="og:title"/.test(idx) && /property="og:image"/.test(idx));
 console.log("index has Twitter card:", /name="twitter:card"/.test(idx));
