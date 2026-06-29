@@ -1789,6 +1789,7 @@
         miniKpi("Mejor día", signed(x.bestDay), "color:#16915B;", "peor " + signed(x.worstDay))),
       bench ? benchmarkPanel(bench) : null,
       riskTrackerPanel(),
+      disciplinePanel(),
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:20px 20px 14px;" },
         h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;" },
           h("div", { style: "font-size:14px;font-weight:600;" }, "Curva de capital"),
@@ -1855,6 +1856,36 @@
           ? h("span", { style: "font-size:11.5px;font-weight:600;color:#D6483B;background:#FBEAE7;padding:4px 10px;border-radius:20px;" }, "Regla rota")
           : h("span", { style: "font-size:11.5px;font-weight:600;color:#16915B;background:#E8F3EC;padding:4px 10px;border-radius:20px;" }, "Dentro de tus límites")),
       h("div", { style: "display:flex;gap:24px;flex-wrap:wrap;" }, meters));
+  }
+  // Checklist adherence on the dashboard: of the days you traded, how often did you
+  // complete your pre-trade checklist, plus your current consecutive streak.
+  function disciplinePanel() {
+    var checkDays = {};
+    state.journal.forEach(function (j) { if (isChecklistEntry(j)) checkDays[j.date] = true; });
+    if (!Object.keys(checkDays).length) return null; // only once the habit exists
+    var tradingDays = {};
+    state.trades.forEach(function (t) { tradingDays[t.date] = true; });
+    var tdArr = Object.keys(tradingDays).sort();
+    if (!tdArr.length) return null;
+    var adhered = tdArr.filter(function (d) { return checkDays[d]; }).length;
+    var pct = Math.round(adhered / tdArr.length * 100);
+    var streak = 0;
+    for (var i = tdArr.length - 1; i >= 0; i--) { if (checkDays[tdArr[i]]) streak++; else break; }
+    var good = pct >= 60;
+    return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px 20px;" },
+      h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px;flex-wrap:wrap;" },
+        h("div", null,
+          h("div", { style: "font-size:14px;font-weight:600;" }, "Disciplina · checklist"),
+          h("div", { style: "font-size:12px;color:#A39E94;margin-top:2px;" }, "Días operados en los que completaste tu checklist antes de entrar")),
+        h("span", { style: "font-size:11.5px;font-weight:600;padding:4px 10px;border-radius:20px;" + (good ? "color:#16915B;background:#E8F3EC;" : "color:#C77B2A;background:#FBF1E6;") }, good ? "Buen hábito" : "Mejorable")),
+      h("div", { style: "display:flex;gap:24px;align-items:center;flex-wrap:wrap;" },
+        h("div", { style: "flex:none;" },
+          h("div", { style: "font-family:'Geist Mono',monospace;font-size:26px;font-weight:600;letter-spacing:-0.5px;" + (good ? "color:#16915B;" : "") }, pct + "%"),
+          h("div", { style: "font-size:11.5px;color:#807B72;margin-top:2px;" }, adhered + "/" + tdArr.length + " días")),
+        h("div", { style: "flex:1;min-width:160px;" },
+          h("div", { style: "height:7px;background:#F1EDE5;border-radius:4px;overflow:hidden;margin-bottom:8px;" },
+            h("div", { style: "height:100%;border-radius:4px;width:" + pct + "%;" + (good ? "background:#16915B;" : "background:#C77B2A;") })),
+          h("div", { style: "font-size:12px;color:#54514A;" }, streak > 0 ? ("Racha actual: " + streak + (streak === 1 ? " día seguido con checklist" : " días seguidos con checklist")) : "Sin racha activa — completa la checklist tu próximo día de trading."))));
   }
   function recentPanel(rows) {
     var list = rows.map(function (row) {
