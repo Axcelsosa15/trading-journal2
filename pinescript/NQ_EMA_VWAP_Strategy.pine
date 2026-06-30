@@ -12,8 +12,8 @@
 //   - Stop: Long = mínimo últimas 5 velas / Short = máximo últimas 5 velas
 //   - Salidas: TP1 1R (50%), TP2 2R (50%)
 // =============================================================================
-strategy(title               = "NQ EMA/VWAP Backtest v1.0",
-         shorttitle          = "NQ EMA/VWAP v1.0",
+strategy(title               = "NQ EMA Backtest v1.0",
+         shorttitle          = "NQ EMA v1.0",
          overlay             = true,
          pyramiding          = 0,
          initial_capital     = 100000,
@@ -171,5 +171,5 @@ plot(strategy.position_size != 0 ? tp2Price  : na, "TP2",  color = color.new(col
 // ----------------------------------------------------------------------------
 // Alertas
 // ----------------------------------------------------------------------------
-alertcondition(longSetup  and flat, title = "Entrada LONG",  message = "NQ EMA/VWAP: señal LONG")
-alertcondition(shortSetup and flat, title = "Entrada SHORT", message = "NQ EMA/VWAP: señal SHORT")
+alertcondition(longSetup  and flat, title = "Entrada LONG",  message = "NQ EMA: señal LONG")
+alertcondition(shortSetup and flat, title = "Entrada SHORT", message = "NQ EMA: señal SHORT")

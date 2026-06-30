@@ -1,7 +1,8 @@
-# NQ EMA/VWAP — Backtest en TradingView (Pine Script v6)
+# NQ EMA — Backtest en TradingView (Pine Script v6)
 
 Implementación del **Protocolo oficial v1.0** del Sistema de Trading NQ para hacer
-backtesting en TradingView (Strategy Tester).
+backtesting en TradingView (Strategy Tester). Esta versión usa **EMAs + Volumen**
+(sin filtro VWAP).
 
 Archivo: [`NQ_EMA_VWAP_Strategy.pine`](./NQ_EMA_VWAP_Strategy.pine)
 
@@ -21,7 +22,6 @@ Archivo: [`NQ_EMA_VWAP_Strategy.pine`](./NQ_EMA_VWAP_Strategy.pine)
 |------|-------|--------------|
 | Dirección | Precio > EMA200 (long) / < EMA200 (short) | `longTrend` / `shortTrend` |
 | Estructura | EMA20 > EMA55 > EMA200 (inverso en short) | `longStructure` / `shortStructure` |
-| VWAP | Precio sobre/bajo VWAP | `longVwap` / `shortVwap` |
 | Volumen | Volumen actual > SMA20(Volumen) | `volOk` |
 | Pullback | El precio toca EMA20 o EMA55 (cuerpo o mecha) | `touched` + `recentPullback` |
 | Trigger | EMA3 cruza EMA10 | `ta.crossover/crossunder` |
@@ -41,8 +41,8 @@ Archivo: [`NQ_EMA_VWAP_Strategy.pine`](./NQ_EMA_VWAP_Strategy.pine)
   exigir el toque en la misma vela del cruce, pon la ventana en `1`.
 - **Definición de "toque":** la EMA queda dentro del rango high–low de la vela
   (`low <= EMA <= high`). Cubre tanto cuerpo como mecha.
-- **VWAP:** se usa `ta.vwap(hlc3)`, que se reinicia por sesión (comportamiento
-  institucional estándar intradía).
+- **Sin VWAP:** esta versión del protocolo (v1.0) no usa filtro VWAP; la
+  participación institucional se aproxima solo con el filtro de Volumen.
 - **Stop con riesgo 0:** si el mínimo/máximo de las últimas 5 velas coincide con
   el precio de entrada (riesgo = 0), la entrada se omite para evitar divisiones y
   trades sin sentido.
@@ -51,7 +51,7 @@ Archivo: [`NQ_EMA_VWAP_Strategy.pine`](./NQ_EMA_VWAP_Strategy.pine)
 ## Parámetros configurables
 
 - EMAs (3/10/20/55/200) y longitud de SMA de volumen.
-- Activar/desactivar filtros VWAP y Volumen.
+- Activar/desactivar el filtro de Volumen.
 - Ventana de pullback y lookback del stop.
 - TP1/TP2 en múltiplos de R y % a cerrar en TP1.
 - Permitir solo Long / solo Short.
