@@ -30,6 +30,54 @@ expected_table_policies(table_name, policyname) as (
     ('user_settings', 'user_settings_insert_own'),
     ('user_settings', 'user_settings_update_own'),
     ('user_settings', 'user_settings_delete_own')
+),
+expected_columns(table_name, column_name) as (
+  values
+    ('accounts', 'id'),
+    ('accounts', 'user_id'),
+    ('accounts', 'name'),
+    ('accounts', 'kind'),
+    ('accounts', 'firm'),
+    ('accounts', 'balance'),
+    ('accounts', 'currency'),
+    ('accounts', 'phase'),
+    ('accounts', 'status'),
+    ('accounts', 'profit_target'),
+    ('accounts', 'max_drawdown'),
+    ('accounts', 'notes'),
+    ('accounts', 'created_at'),
+    ('trades', 'id'),
+    ('trades', 'user_id'),
+    ('trades', 'date'),
+    ('trades', 'time'),
+    ('trades', 'symbol'),
+    ('trades', 'type'),
+    ('trades', 'side'),
+    ('trades', 'contracts'),
+    ('trades', 'entry'),
+    ('trades', 'exit'),
+    ('trades', 'setup'),
+    ('trades', 'emotion'),
+    ('trades', 'rating'),
+    ('trades', 'note'),
+    ('trades', 'pnl'),
+    ('trades', 'account_id'),
+    ('trades', 'tags'),
+    ('trades', 'mae'),
+    ('trades', 'mfe'),
+    ('trades', 'screenshot_path'),
+    ('trades', 'created_at'),
+    ('journal', 'id'),
+    ('journal', 'user_id'),
+    ('journal', 'date'),
+    ('journal', 'mood'),
+    ('journal', 'title'),
+    ('journal', 'body'),
+    ('journal', 'lesson'),
+    ('journal', 'created_at'),
+    ('user_settings', 'user_id'),
+    ('user_settings', 'data'),
+    ('user_settings', 'updated_at')
 )
 select
   'rls_enabled_on_app_tables' as check_name,
@@ -53,6 +101,19 @@ left join pg_policies p
  and p.tablename = e.table_name
  and p.policyname = e.policyname
 where p.policyname is not null
+
+union all
+
+select
+  'app_schema_columns_exist' as check_name,
+  count(*) = (select count(*) from expected_columns) as ok,
+  jsonb_agg(c.table_name || '.' || c.column_name order by c.table_name, c.column_name) as detail
+from expected_columns e
+left join information_schema.columns c
+  on c.table_schema = 'public'
+ and c.table_name = e.table_name
+ and c.column_name = e.column_name
+where c.column_name is not null
 
 union all
 
