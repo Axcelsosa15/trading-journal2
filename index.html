@@ -997,10 +997,13 @@
       cross.setAttribute("visibility", "visible");
       dot.setAttribute("cx", x(best)); dot.setAttribute("cy", y(p.eq));
       dot.setAttribute("visibility", "visible");
-      showTooltip(ev,
-        '<div class="tt-t">' + fdate(p.t.date) + " · " + esc(p.t.symbol) + "</div>" +
-        '<div class="tt-r"><span>Operación</span><span class="num ' + pnlClass(p.t.pnl) + '">' + money(p.t.pnl, true) + "</span></div>" +
-        '<div class="tt-r"><span>Acumulado</span><span class="num ' + pnlClass(p.eq) + '">' + money(p.eq, true) + "</span></div>");
+      showTooltip(ev, {
+        title: fdate(p.t.date) + " · " + p.t.symbol,
+        rows: [
+          ["Operación", money(p.t.pnl, true), pnlClass(p.t.pnl)],
+          ["Acumulado", money(p.eq, true), pnlClass(p.eq)]
+        ]
+      });
     });
     hit.addEventListener("mouseleave", function () {
       cross.setAttribute("visibility", "hidden");
@@ -1071,10 +1074,13 @@
         var v = byM[k];
         var mIdx = parseInt(k.slice(5, 7), 10) - 1;
         var n = trades.filter(function (t) { return t.date.slice(0, 7) === k; }).length;
-        showTooltip(ev,
-          '<div class="tt-t">' + MESES[mIdx] + " " + k.slice(0, 4) + "</div>" +
-          '<div class="tt-r"><span>P&L</span><span class="num ' + pnlClass(v) + '">' + money(v, true) + "</span></div>" +
-          '<div class="tt-r"><span>Operaciones</span><span class="num">' + n + "</span></div>");
+        showTooltip(ev, {
+          title: MESES[mIdx] + " " + k.slice(0, 4),
+          rows: [
+            ["P&L", money(v, true), pnlClass(v)],
+            ["Operaciones", n]
+          ]
+        });
       });
       bar.addEventListener("mouseleave", hideTooltip);
     });
@@ -1132,10 +1138,12 @@
 
   /* ── Gráfico de barras genérico ──────────────────────── */
   function barTip(it) {
-    return '<div class="tt-t">' + esc(it.label) + "</div>" +
-      '<div class="tt-r"><span>P&L</span><span class="num ' + pnlClass(it.value) + '">' + money(it.value, true) + "</span></div>" +
-      '<div class="tt-r"><span>Operaciones</span><span class="num">' + it.n + "</span></div>" +
-      (it.wr == null ? "" : '<div class="tt-r"><span>Win rate</span><span class="num">' + it.wr.toFixed(0) + "%</span></div>");
+    var rows = [
+      ["P&L", money(it.value, true), pnlClass(it.value)],
+      ["Operaciones", it.n]
+    ];
+    if (it.wr != null) rows.push(["Win rate", it.wr.toFixed(0) + "%"]);
+    return { title: it.label, rows: rows };
   }
 
   function drawBars(boxId, items, opts) {
@@ -1265,18 +1273,39 @@
       aria: "Distribución de R",
       fmtY: function (v) { return String(Math.round(v)); },
       tip: function (it) {
-        return '<div class="tt-t">' + esc(it.label) + "</div>" +
-          '<div class="tt-r"><span>Operaciones</span><span class="num">' + it.n + "</span></div>" +
-          '<div class="tt-r"><span>Del total</span><span class="num">' + it.pct.toFixed(0) + "%</span></div>";
+        return {
+          title: it.label,
+          rows: [["Operaciones", it.n], ["Del total", it.pct.toFixed(0) + "%"]]
+        };
       }
     });
   }
 
   /* ── Tooltip ─────────────────────────────────────────── */
+  /* El tooltip se arma con nodos DOM y textContent (nunca innerHTML):
+     spec = { title, rows: [[etiqueta, valor, claseOpcional], …] } */
   var tt = null;
-  function showTooltip(ev, html) {
+  function showTooltip(ev, spec) {
     if (!tt) tt = $("tooltip");
-    tt.innerHTML = html;
+    tt.textContent = "";
+    if (spec.title != null && spec.title !== "") {
+      var tEl = document.createElement("div");
+      tEl.className = "tt-t";
+      tEl.textContent = String(spec.title);
+      tt.appendChild(tEl);
+    }
+    (spec.rows || []).forEach(function (r) {
+      var row = document.createElement("div");
+      row.className = "tt-r";
+      var a = document.createElement("span");
+      a.textContent = String(r[0]);
+      var b = document.createElement("span");
+      b.className = "num" + (r[2] ? " " + r[2] : "");
+      b.textContent = String(r[1]);
+      row.appendChild(a);
+      row.appendChild(b);
+      tt.appendChild(row);
+    });
     tt.style.display = "block";
     var x = ev.clientX + 14, y = ev.clientY + 14;
     var r = tt.getBoundingClientRect();
