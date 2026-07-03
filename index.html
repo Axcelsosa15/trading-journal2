@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Bitácora — diario de trading: operaciones, calendario de resultados, analítica y diario.">
-  <!-- Security: no inline scripts (XSS-resistant); app code from same origin,
-       Supabase SDK from jsdelivr; network only to our own Supabase project. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net; worker-src 'self'; manifest-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://ajihczecndwznolgbrdc.supabase.co; connect-src 'self' https://ajihczecndwznolgbrdc.supabase.co wss://ajihczecndwznolgbrdc.supabase.co; base-uri 'none'; form-action 'none'">
+  <!-- Security: no inline scripts; app code from same origin, Supabase SDK from
+       jsdelivr, and CAPTCHA providers only when Auth bot protection is enabled. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net https://challenges.cloudflare.com https://js.hcaptcha.com; worker-src 'self'; manifest-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://ajihczecndwznolgbrdc.supabase.co; connect-src 'self' https://ajihczecndwznolgbrdc.supabase.co wss://ajihczecndwznolgbrdc.supabase.co https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com; frame-src https://challenges.cloudflare.com https://hcaptcha.com https://*.hcaptcha.com; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <title>Bitácora · Trading Journal</title>
   <!-- SEO / social. Canonical base is the current Cloudflare Pages URL; swap when a custom domain is connected. -->
@@ -24,6 +24,9 @@
   <meta name="twitter:title" content="Bitácora · Trading Journal">
   <meta name="twitter:description" content="Diario de trading con analítica avanzada, insights de patrones y soporte sin conexión.">
   <meta name="twitter:image" content="https://axcelsosa15.github.io/trading-journal2/icon-512.png">
+  <!-- Optional Supabase Auth CAPTCHA. Provider: "turnstile" or "hcaptcha"; site key is public. -->
+  <meta name="bitacora-captcha-provider" content="">
+  <meta name="bitacora-captcha-site-key" content="">
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#16181C">
   <meta name="mobile-web-app-capable" content="yes">
@@ -43,6 +46,7 @@
   <div id="app"></div>
   <div id="modal-root"></div>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="captcha-auth-patch.js"></script>
   <script src="app.js"></script>
   <script src="research-polish.js?v=20260703b"></script>
 </body>
