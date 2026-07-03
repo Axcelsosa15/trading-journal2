@@ -17,8 +17,9 @@ online; everything else works offline).
   session and hour.
 - **Estadísticas** — advanced metrics: expectancy ($ and R), SQN, Sharpe,
   Sortino, Kelly, profit factor, payoff, drawdown + duration, recovery factor,
-  streaks, percentiles, MAE/MFE edge ratio, plus a P&L distribution histogram
-  and an underwater drawdown curve.
+  streaks, percentiles, MAE/MFE edge ratio, gross-vs-net P&L and total
+  commissions, plus a P&L distribution histogram and an underwater drawdown
+  curve.
 - **Correlaciones** — Pearson correlation of numeric factors (rating, size,
   hour, MAE/MFE) with P&L, best/worst category per factor, and an explorer
   (scatter + trend line, or ranked bars by chosen result measure).
@@ -37,6 +38,12 @@ online; everything else works offline).
 All charts are inline SVG. Data is stored per user in **Supabase** (Postgres
 with Row Level Security); a local snapshot is cached in `localStorage` for
 offline viewing.
+
+`pnl` is always stored **net** of commissions/fees (see `commission` below),
+so every downstream metric — win rate, profit factor, expectancy, drawdown,
+SQN, Kelly, streaks — is computed on a net basis. Gross P&L and total
+commissions are broken out separately in **Estadísticas** and the trade
+detail drawer.
 
 ## Security
 
@@ -66,6 +73,11 @@ offline viewing.
   columns (auto-detected) and bulk-import trades; P&L is computed when absent.
 - `tests/` — headless jsdom smoke tests; `tests/run.js` is the runner.
 - `SECURITY.md` — security assessment and remediation guide.
+- `supabase/migrations/` — SQL to run by hand in the Supabase SQL Editor
+  (this project has no other tracked schema/CLI setup). **Run these against
+  your Supabase project before deploying a new commit that needs them** —
+  e.g. `0001_add_trade_commission.sql` must run before the commission field
+  goes live, or saving/editing a trade will fail with a missing-column error.
 
 ## Run
 
