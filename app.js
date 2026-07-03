@@ -772,17 +772,32 @@
       },
     };
   }
-  // Parse all data rows against the current mapping → { valid:[rows], invalid:n, errors:[] }.
+  // Identity key for duplicate detection: same date/symbol/side/size/entry/exit
+  // is almost certainly the same fill, whether re-imported or double-entered.
+  function tradeDupKey(t) {
+    return [t.date, String(t.symbol || "").toUpperCase(), t.side, Number(t.contracts), Number(t.entry), Number(t.exit)].join("|");
+  }
+  // Parse all data rows against the current mapping → { valid:[rows], invalid:n, errors:[], dupCount:n }.
+  // Duplicates are flagged, not dropped: importing is still the user's call, but
+  // they see the risk before confirming (matches trades already on file, or
+  // repeated within the same CSV).
   function importPreview() {
     var im = state.import;
-    if (!im || !im.rows.length) return { valid: [], invalid: 0, errors: [] };
-    var valid = [], invalid = 0, errors = [];
+    if (!im || !im.rows.length) return { valid: [], invalid: 0, errors: [], dupCount: 0 };
+    var valid = [], invalid = 0, errors = [], dupCount = 0;
+    var existingKeys = {};
+    state.trades.forEach(function (t) { existingKeys[tradeDupKey(t)] = true; });
+    var seenInFile = {};
     im.rows.slice(1).forEach(function (cells, n) {
       var r = buildImportRow(cells, im.map);
-      if (r.row) valid.push(r.row);
-      else { invalid++; if (errors.length < 5) errors.push("Fila " + (n + 2) + ": " + r.error); }
+      if (r.row) {
+        var key = tradeDupKey(r.row);
+        if (existingKeys[key] || seenInFile[key]) dupCount++;
+        seenInFile[key] = true;
+        valid.push(r.row);
+      } else { invalid++; if (errors.length < 5) errors.push("Fila " + (n + 2) + ": " + r.error); }
     });
-    return { valid: valid, invalid: invalid, errors: errors };
+    return { valid: valid, invalid: invalid, errors: errors, dupCount: dupCount };
   }
   async function runImport() {
     var prev = importPreview();
@@ -2882,6 +2897,7 @@
       body.push(h("div", { style: "background:#FBFAF7;border:1px solid #ECE7DD;border-radius:10px;padding:12px 14px;font-size:13px;" },
         h("div", { style: "font-weight:600;" + (prev.valid.length ? "color:#16915B;" : "color:#A39E94;") }, prev.valid.length + " operación(es) lista(s) para importar"),
         prev.invalid ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.invalid + " fila(s) con error se omitirán") : null,
+        prev.dupCount ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.dupCount + " fila(s) parecen duplicadas (misma fecha, símbolo, dirección, contratos, entrada y salida) — se importarán igual; revísalas antes de confirmar.") : null,
         prev.errors.length ? h("div", { style: "margin-top:6px;color:#A39E94;font-size:12px;font-family:'Geist Mono',monospace;white-space:pre-line;" }, prev.errors.join("\n")) : null));
     }
     var canImport = !im.busy && prev && prev.valid.length > 0;
