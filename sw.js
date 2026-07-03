@@ -13,10 +13,11 @@
  * takes over on the next load instead of waiting behind the old one. Bump CACHE
  * to purge old asset versions.
  */
-var CACHE = "bitacora-v4";
+var CACHE = "bitacora-v5";
 var SHELL = [
   "./",
   "./index.html",
+  "./captcha-auth-patch.js",
   "./app.js",
   "./styles.css",
   "./theme-dark.css",
