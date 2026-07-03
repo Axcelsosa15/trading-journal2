@@ -659,12 +659,52 @@
     };
   }
 
+  /* Normaliza cada operación a tipos estrictos. Todo lo que entra por
+     localStorage o por un import pasa por aquí, de modo que ningún dato
+     externo llega a los render como HTML sin tipar. */
+  function numOrNull(v) {
+    if (v === "" || v == null) return null;
+    var n = Number(v);
+    return isFinite(n) ? n : null;
+  }
+  function sanitizeTrade(t) {
+    t = t && typeof t === "object" ? t : {};
+    return {
+      id: String(t.id || "").replace(/[^\w.:-]/g, "") || uid(),
+      date: /^\d{4}-\d{2}-\d{2}$/.test(String(t.date || "")) ? String(t.date) : "",
+      time: /^\d{2}:\d{2}$/.test(String(t.time || "")) ? String(t.time) : "",
+      symbol: String(t.symbol || ""),
+      dir: t.dir === "short" ? "short" : "long",
+      setup: String(t.setup || ""),
+      session: String(t.session || ""),
+      size: numOrNull(t.size),
+      entry: numOrNull(t.entry),
+      exit: numOrNull(t.exit),
+      sl: numOrNull(t.sl),
+      risk: numOrNull(t.risk),
+      pnl: Number(t.pnl) || 0,
+      fees: numOrNull(t.fees),
+      emotion: String(t.emotion || ""),
+      plan: String(t.plan || ""),
+      tags: Array.isArray(t.tags) ? t.tags.map(function (x) { return String(x); }) : [],
+      notes: String(t.notes || "")
+    };
+  }
+  function sanitizeState(s) {
+    if (!s || typeof s !== "object" || !Array.isArray(s.trades)) s = defaults();
+    s.trades = s.trades.map(sanitizeTrade).filter(function (t) { return t.date; });
+    if (!s.system || typeof s.system !== "object") s.system = defaults().system;
+    var sys = defaults().system;
+    s.system.setups = (Array.isArray(s.system.setups) ? s.system.setups : sys.setups).map(function (x) { return String(x); });
+    s.system.checklist = (Array.isArray(s.system.checklist) ? s.system.checklist : sys.checklist).map(function (x) { return String(x); });
+    ["entrada", "salida", "riesgo", "notas"].forEach(function (k) { s.system[k] = String(s.system[k] || ""); });
+    return s;
+  }
+
   var state;
   try {
     var raw = localStorage.getItem(KEY);
-    state = raw ? JSON.parse(raw) : defaults();
-    if (!state || !Array.isArray(state.trades)) state = defaults();
-    if (!state.system) state.system = defaults().system;
+    state = sanitizeState(raw ? JSON.parse(raw) : defaults());
   } catch (e) { state = defaults(); }
 
   var saveT = null;
@@ -1640,9 +1680,8 @@
     var ids = {};
     state.trades.forEach(function (t) { ids[t.id] = 1; });
     var added = 0;
-    trades.forEach(function (t) {
-      if (!t.id) t.id = uid();
-      t.id = String(t.id);
+    trades.forEach(function (raw) {
+      var t = sanitizeTrade(raw);
       if (!ids[t.id] && t.date && t.symbol) {
         state.trades.push(t);
         ids[t.id] = 1;
@@ -1706,8 +1745,7 @@
           if (data.trades.some(isOldFormatTrade)) {
             data = { version: 2, trades: data.trades.map(oldTradeToNew), system: defaults().system };
           }
-          state = data;
-          if (!state.system) state.system = defaults().system;
+          state = sanitizeState(data);
           toast("Datos reemplazados: " + state.trades.length + " operaciones");
         } else {
           var added = mergeData(data);
