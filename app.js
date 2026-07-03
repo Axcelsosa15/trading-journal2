@@ -197,9 +197,14 @@
   }
   function corrColor(r) { return Math.abs(r) < 0.1 ? "color:#807B72;" : (r >= 0 ? "color:#16915B;" : "color:#D6483B;"); }
 
+  var POINT_VALUES = { ES: 50, MES: 5, NQ: 20, MNQ: 2, CL: 1000, GC: 100, MGC: 10, RTY: 50, MRTY: 5 };
   function PV(t) {
-    var P = { ES: 50, MES: 5, NQ: 20, MNQ: 2, CL: 1000, GC: 100, MGC: 10, RTY: 50, MRTY: 5 };
-    return t.type === "option" ? 100 : (P[(t.symbol || "").toUpperCase()] || 1);
+    return t.type === "option" ? 100 : (POINT_VALUES[(t.symbol || "").toUpperCase()] || 1);
+  }
+  // True when a future's point value is known; unknown symbols silently fall
+  // back to a $1 multiplier in PV(), which can badly misprice P&L.
+  function knownPointValue(symbol, type) {
+    return type === "option" || POINT_VALUES.hasOwnProperty(String(symbol || "").trim().toUpperCase());
   }
   function pnlOf(t) {
     var dir = t.side === "long" ? 1 : -1;
@@ -392,7 +397,7 @@
     applyTheme(next); render();
   }
   // Build stamp so you can always tell which version you're running.
-  var APP_VERSION = "2026.06.28";
+  var APP_VERSION = "2026.07.03";
   // Force the freshest deploy: unregister the service worker, drop every cache,
   // then hard-reload. Cures a browser stuck on an old cached build.
   async function forceUpdate() {
@@ -723,7 +728,14 @@
   function importDate(v) {
     var s = String(v || "").trim();
     var m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/); // ISO-ish YYYY-MM-DD
-    if (m) return m[1] + "-" + pad(m[2]) + "-" + pad(m[3]);
+    if (m) {
+      var isoMon = +m[2], isoDay = +m[3];
+      if (isoMon < 1 || isoMon > 12 || isoDay < 1 || isoDay > 31) return null;
+      // pad() expects a Number: feeding it the raw regex string (e.g. "06")
+      // would compare "06" < 10 as a numeric coercion but then concatenate the
+      // original zero-padded string, producing a mangled "006" segment.
+      return m[1] + "-" + pad(isoMon) + "-" + pad(isoDay);
+    }
     m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/); // D/M/Y or M/D/Y
     if (m) {
       var a = +m[1], b = +m[2];
@@ -772,17 +784,26 @@
       },
     };
   }
-  // Parse all data rows against the current mapping → { valid:[rows], invalid:n, errors:[] }.
+  // Identity key for duplicate detection: same day, symbol, side, size and
+  // prices is treated as the same trade (re-importing the same broker export
+  // shouldn't double every P&L number).
+  function tradeDupKey(t) { return [t.date, t.symbol, t.side, t.contracts, t.entry, t.exit].join("|"); }
+  // Parse all data rows against the current mapping → { valid:[rows], invalid:n, duplicate:n, errors:[] }.
   function importPreview() {
     var im = state.import;
-    if (!im || !im.rows.length) return { valid: [], invalid: 0, errors: [] };
-    var valid = [], invalid = 0, errors = [];
+    if (!im || !im.rows.length) return { valid: [], invalid: 0, duplicate: 0, errors: [] };
+    var seen = {};
+    state.trades.forEach(function (t) { seen[tradeDupKey(t)] = true; });
+    var valid = [], invalid = 0, duplicate = 0, errors = [];
     im.rows.slice(1).forEach(function (cells, n) {
       var r = buildImportRow(cells, im.map);
-      if (r.row) valid.push(r.row);
-      else { invalid++; if (errors.length < 5) errors.push("Fila " + (n + 2) + ": " + r.error); }
+      if (!r.row) { invalid++; if (errors.length < 5) errors.push("Fila " + (n + 2) + ": " + r.error); return; }
+      var key = tradeDupKey(r.row);
+      if (seen[key]) { duplicate++; return; }
+      seen[key] = true; // also catches the same row repeated within this file
+      valid.push(r.row);
     });
-    return { valid: valid, invalid: invalid, errors: errors };
+    return { valid: valid, invalid: invalid, duplicate: duplicate, errors: errors };
   }
   async function runImport() {
     var prev = importPreview();
@@ -884,12 +905,16 @@
   async function saveTrade() {
     var d = state.draft;
     if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
-    var pnl = pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
+    // Trim before use: a stray leading/trailing space (common from copy-paste)
+    // would otherwise miss the PV() lookup table and silently price the trade
+    // at a $1 point value instead of the instrument's real multiplier.
+    var symbol = String(d.symbol).trim().toUpperCase();
+    var pnl = pnlOf({ symbol: symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
     // Upload a freshly attached screenshot first (online only); otherwise keep
     // whatever path the trade already had.
     var shotPath = d.screenshot_path || null;
     if (d._imageFile) { var p = await uploadScreenshot(d._imageFile); if (p) shotPath = p; }
-    var row = { date: d.date, time: d.time || null, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
+    var row = { date: d.date, time: d.time || null, symbol: symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
     if (state.editId) {
       if (!isOnline()) { window.alert("Necesitas conexión para editar una operación. Las operaciones nuevas sí se guardan sin conexión."); return; }
       var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
@@ -2823,7 +2848,7 @@
   function draftPnl() {
     var d = state.draft;
     var valid = d.entry !== "" && d.exit !== "";
-    var pnl = valid ? pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts) || 0, entry: Number(d.entry), exit: Number(d.exit) }) : 0;
+    var pnl = valid ? pnlOf({ symbol: String(d.symbol || "").trim(), type: d.type, side: d.side, contracts: Number(d.contracts) || 0, entry: Number(d.entry), exit: Number(d.exit) }) : 0;
     return { valid: valid, pnl: pnl };
   }
   function isSaveValid() { var d = state.draft; return d.symbol && d.entry !== "" && d.exit !== "" && Number(d.contracts) > 0; }
@@ -2882,6 +2907,7 @@
       body.push(h("div", { style: "background:#FBFAF7;border:1px solid #ECE7DD;border-radius:10px;padding:12px 14px;font-size:13px;" },
         h("div", { style: "font-weight:600;" + (prev.valid.length ? "color:#16915B;" : "color:#A39E94;") }, prev.valid.length + " operación(es) lista(s) para importar"),
         prev.invalid ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.invalid + " fila(s) con error se omitirán") : null,
+        prev.duplicate ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.duplicate + " fila(s) duplicadas (ya existen o repetidas en el archivo) se omitirán") : null,
         prev.errors.length ? h("div", { style: "margin-top:6px;color:#A39E94;font-size:12px;font-family:'Geist Mono',monospace;white-space:pre-line;" }, prev.errors.join("\n")) : null));
     }
     var canImport = !im.busy && prev && prev.valid.length > 0;
@@ -2897,6 +2923,7 @@
     var inMono = "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;font-family:'Geist Mono',monospace;";
     var editing = state.editId != null;
     var previewSpan = h("span", { style: "font-family:'Geist Mono',monospace;font-size:18px;font-weight:600;" });
+    var symbolWarn = h("div", { style: "display:none;font-size:11.5px;color:#C77B2A;" }, "Símbolo sin valor de punto conocido: se está usando $1/punto. Verifica el P&L manualmente.");
     var saveBtn = h("button", { onClick: saveTrade }, editing ? "Guardar cambios" : "Guardar operación");
     function refresh() {
       var dp = draftPnl();
@@ -2904,6 +2931,7 @@
       previewSpan.style.cssText = "font-family:'Geist Mono',monospace;font-size:18px;font-weight:600;" + (dp.valid ? pnlColor(dp.pnl) : "color:#A39E94;");
       var valid = isSaveValid();
       saveBtn.style.cssText = "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (valid ? "background:#16181C;color:#fff;" : "background:#CFC9BD;color:#fff;cursor:not-allowed;");
+      symbolWarn.style.display = (d.symbol && !knownPointValue(d.symbol, d.type)) ? "block" : "none";
     }
     var d = state.draft;
     var note = h("textarea", { rows: "3", placeholder: "¿Qué viste? ¿Seguiste el plan?", style: "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;line-height:1.5;resize:vertical;", onInput: function (e) { d.note = e.target.value; } });
@@ -2940,8 +2968,10 @@
           d._imageFile ? h("span", { style: "margin-left:auto;color:#16915B;font-weight:700;" }, "✓") : null, shotInput);
         return field("Captura (opcional)", picker);
       })(),
-      h("div", { style: "display:flex;align-items:center;justify-content:space-between;background:#FBFAF7;border:1px solid #ECE7DD;border-radius:11px;padding:13px 16px;" },
-        h("span", { style: "font-size:12.5px;color:#807B72;" }, "P&L estimado"), previewSpan),
+      h("div", { style: "display:flex;flex-direction:column;gap:6px;background:#FBFAF7;border:1px solid #ECE7DD;border-radius:11px;padding:13px 16px;" },
+        h("div", { style: "display:flex;align-items:center;justify-content:space-between;" },
+          h("span", { style: "font-size:12.5px;color:#807B72;" }, "P&L estimado"), previewSpan),
+        symbolWarn),
     ];
     var footer = [
       h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #E2DDD3;background:#fff;font-weight:600;font-size:13.5px;", hoverBg: "#FAF8F4", onClick: closeAdd }, "Cancelar"),
