@@ -1,6 +1,7 @@
 -- Bitacora Trading Journal - Supabase RLS policies
 --
--- Run in Supabase SQL Editor for project ajihczecndwznolgbrdc.
+-- Run in Supabase SQL Editor for project ajihczecndwznolgbrdc after
+-- supabase/schema.sql.
 -- Goal: authenticated users can only read/write/delete their own rows, and
 -- trade screenshots stay private under the user's own storage folder.
 
