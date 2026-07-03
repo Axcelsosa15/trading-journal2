@@ -30,6 +30,13 @@
   document.body.classList.add("rp-ready");
 
   function textOf(el) { return (el && el.textContent || "").trim(); }
+  // Trade tags are freeform user input; any raw string that ends up inside an
+  // HTML string built with insertAdjacentHTML must be escaped first.
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
   function money(n) {
     if (n == null || !isFinite(n)) return "-";
     var sign = n > 0 ? "+" : n < 0 ? "-" : "";
@@ -147,7 +154,7 @@
       var rows = groups[key];
       var edge = avg(rows, function (t) { return t.pnl; });
       var width = Math.max(6, Math.min(100, Math.abs(edge || 0) / 6));
-      return '<div class="rp-bar-row"><span>' + (labels[key] || key) + '</span><span class="rp-bar-track"><span class="rp-bar-fill" style="--rp-w:' + width + '%;--rp-color:' + ((edge || 0) < 0 ? 'var(--rp-red)' : 'var(--rp-green)') + '"></span></span><strong style="color:' + ((edge || 0) < 0 ? 'var(--rp-red)' : 'var(--rp-green)') + '">' + money(edge) + '/op</strong></div>';
+      return '<div class="rp-bar-row"><span>' + escapeHtml(labels[key] || key) + '</span><span class="rp-bar-track"><span class="rp-bar-fill" style="--rp-w:' + width + '%;--rp-color:' + ((edge || 0) < 0 ? 'var(--rp-red)' : 'var(--rp-green)') + '"></span></span><strong style="color:' + ((edge || 0) < 0 ? 'var(--rp-red)' : 'var(--rp-green)') + '">' + money(edge) + '/op</strong></div>';
     }).join("");
   }
   function exportResearchCsv() {

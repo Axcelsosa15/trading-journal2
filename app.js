@@ -197,9 +197,14 @@
   }
   function corrColor(r) { return Math.abs(r) < 0.1 ? "color:#807B72;" : (r >= 0 ? "color:#16915B;" : "color:#D6483B;"); }
 
+  // Dollar value of a 1-point move per contract, for CME futures whose price
+  // is quoted in whole points/dollars (equity indices, metals, energy). Bond
+  // and currency futures are intentionally excluded: they're quoted in 32nds
+  // or pips, so a "$ per point" multiplier would silently misprice them too.
+  var POINT_VALUE = { ES: 50, MES: 5, NQ: 20, MNQ: 2, YM: 5, MYM: .5, RTY: 50, MRTY: 5, CL: 1000, MCL: 100, GC: 100, MGC: 10, SI: 5000, HG: 25000, NG: 10000, RB: 42000, HO: 42000 };
+  function knownPV(t) { return t.type === "option" || !!POINT_VALUE[(t.symbol || "").toUpperCase()]; }
   function PV(t) {
-    var P = { ES: 50, MES: 5, NQ: 20, MNQ: 2, CL: 1000, GC: 100, MGC: 10, RTY: 50, MRTY: 5 };
-    return t.type === "option" ? 100 : (P[(t.symbol || "").toUpperCase()] || 1);
+    return t.type === "option" ? 100 : (POINT_VALUE[(t.symbol || "").toUpperCase()] || 1);
   }
   function pnlOf(t) {
     var dir = t.side === "long" ? 1 : -1;
@@ -246,6 +251,9 @@
     if (!isOnline() || !state.user) return;
     var q = getOutbox();
     if (!q.length) { state.pending = 0; return; }
+    // Persist the outbox after every item (not just once at the end): if the
+    // tab closes or crashes mid-loop, already-synced items must not still be
+    // on disk, or they'd be re-inserted (duplicated) on the next flush.
     var remaining = [];
     for (var i = 0; i < q.length; i++) {
       var item = q[i];
@@ -255,8 +263,8 @@
         if (item.table === "trades") { var ct = coerceTrade(res.data); state.trades = state.trades.map(function (t) { return t.id === item.tempId ? ct : t; }); }
         else if (item.table === "journal") { var cj = coerceJournal(res.data); state.journal = state.journal.map(function (jj) { return jj.id === item.tempId ? cj : jj; }); }
       } catch (e) { remaining.push(item); }
+      setOutbox(remaining.concat(q.slice(i + 1)));
     }
-    setOutbox(remaining);
     saveCache();
   }
   function hydrateFromCache() {
@@ -522,7 +530,7 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   }
   function exportAll() {
-    var data = { app: "Bitacora", exported_at: new Date().toISOString(), accounts: state.accounts, trades: state.trades, journal: state.journal };
+    var data = { app: "Bitacora", exported_at: new Date().toISOString(), accounts: state.accounts, trades: state.trades, journal: state.journal, settings: state.settings };
     downloadText("bitacora-backup-" + todayISO() + ".json", JSON.stringify(data, null, 2), "application/json");
   }
   function exportTax(rows) {
@@ -705,10 +713,25 @@
     });
     return map;
   }
+  // Accepts both US (1,234.56) and European (1.234,56) formatted numbers. The
+  // decimal separator is whichever of "," or "." appears last in the string;
+  // the other one (if any) is treated as a thousands separator and stripped.
   function importNum(v) {
     if (v == null) return NaN;
-    var s = String(v).replace(/[^\d.,\-]/g, "").replace(/,(?=\d{3}\b)/g, "").replace(",", ".");
-    return parseFloat(s);
+    var raw = String(v).trim().replace(/[^\d.,\-]/g, "");
+    if (!raw) return NaN;
+    var neg = raw.charAt(0) === "-";
+    var s = raw.replace(/-/g, "");
+    var lastComma = s.lastIndexOf(","), lastDot = s.lastIndexOf(".");
+    if (lastComma > -1 && lastDot > -1) {
+      s = lastComma > lastDot ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+    } else if (lastComma > -1) {
+      var parts = s.split(",");
+      var isThousands = parts.length > 1 && parts[0].length <= 3 && parts.slice(1).every(function (p) { return p.length === 3; });
+      s = isThousands ? parts.join("") : s.replace(",", ".");
+    }
+    var n = parseFloat(s);
+    return neg ? -n : n;
   }
   function importSide(v) {
     var s = String(v || "").trim().toLowerCase();
@@ -772,17 +795,26 @@
       },
     };
   }
-  // Parse all data rows against the current mapping → { valid:[rows], invalid:n, errors:[] }.
+  // Same date/symbol/side/contracts/entry/exit as an existing trade: very
+  // likely the same fill re-imported (overlapping broker export date ranges,
+  // or the same file dropped twice), not a coincidence.
+  function tradeSignature(t) { return [t.date, t.symbol, t.side, Number(t.contracts), Number(t.entry), Number(t.exit)].join("|"); }
+  // Parse all data rows against the current mapping → { valid:[rows], invalid:n, errors:[], dupCount:n }.
   function importPreview() {
     var im = state.import;
-    if (!im || !im.rows.length) return { valid: [], invalid: 0, errors: [] };
+    if (!im || !im.rows.length) return { valid: [], invalid: 0, errors: [], dupCount: 0 };
     var valid = [], invalid = 0, errors = [];
+    var seen = {}; state.trades.forEach(function (t) { seen[tradeSignature(t)] = true; });
+    var dupCount = 0;
     im.rows.slice(1).forEach(function (cells, n) {
       var r = buildImportRow(cells, im.map);
-      if (r.row) valid.push(r.row);
-      else { invalid++; if (errors.length < 5) errors.push("Fila " + (n + 2) + ": " + r.error); }
+      if (r.row) {
+        valid.push(r.row);
+        var sig = tradeSignature(r.row);
+        if (seen[sig]) dupCount++; else seen[sig] = true;
+      } else { invalid++; if (errors.length < 5) errors.push("Fila " + (n + 2) + ": " + r.error); }
     });
-    return { valid: valid, invalid: invalid, errors: errors };
+    return { valid: valid, invalid: invalid, errors: errors, dupCount: dupCount };
   }
   async function runImport() {
     var prev = importPreview();
@@ -865,6 +897,11 @@
       return path;
     } catch (e) { return null; }
   }
+  // Best-effort delete of a stored screenshot (a trade was deleted, or its
+  // screenshot was replaced). Never blocks the caller on failure.
+  function removeScreenshot(path) {
+    try { SB.storage.from(SHOT_BUCKET).remove([path]); } catch (e) { }
+  }
   async function signedShotUrl(path) {
     try { var r = await SB.storage.from(SHOT_BUCKET).createSignedUrl(path, 3600); return r && r.data ? r.data.signedUrl : null; }
     catch (e) { return null; }
@@ -887,13 +924,15 @@
     var pnl = pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
     // Upload a freshly attached screenshot first (online only); otherwise keep
     // whatever path the trade already had.
-    var shotPath = d.screenshot_path || null;
+    var oldShotPath = d.screenshot_path || null;
+    var shotPath = oldShotPath;
     if (d._imageFile) { var p = await uploadScreenshot(d._imageFile); if (p) shotPath = p; }
     var row = { date: d.date, time: d.time || null, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
     if (state.editId) {
       if (!isOnline()) { window.alert("Necesitas conexión para editar una operación. Las operaciones nuevas sí se guardan sin conexión."); return; }
       var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
       if (up.error) { window.alert("No se pudo actualizar la operación: " + up.error.message); return; }
+      if (oldShotPath && oldShotPath !== shotPath) removeScreenshot(oldShotPath);
       var updated = coerceTrade(up.data);
       state.trades = state.trades.map(function (t) { return t.id === updated.id ? updated : t; });
     } else if (!isOnline()) {
@@ -935,6 +974,8 @@
     if (!isOnline()) { window.alert("Necesitas conexión para eliminar una operación."); return; }
     var res = await SB.from("trades").delete().eq("id", id);
     if (res.error) { window.alert("No se pudo eliminar: " + res.error.message); return; }
+    var shot = (state.trades.find(function (t) { return t.id === id; }) || {}).screenshot_path;
+    if (shot) removeScreenshot(shot);
     state.trades = state.trades.filter(function (t) { return t.id !== id; });
     state.selectedId = null;
     saveCache();
@@ -1147,7 +1188,13 @@
     });
     return m;
   }
-  function byDateAsc(a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); }
+  // Chronological order: by date, then by intraday time so same-day trades are
+  // sequenced the way they actually happened (not by insertion/fetch order).
+  function byDateAsc(a, b) {
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    var ta = a.time || "", tb = b.time || "";
+    return ta < tb ? -1 : (ta > tb ? 1 : 0);
+  }
   // The R unit (1R) when no per-trade stop is recorded: the average loss size.
   function rUnitOf(rows) {
     var losses = rows.filter(function (t) { return t.pnl < 0; }).map(function (t) { return t.pnl; });
@@ -1184,10 +1231,13 @@
     var kelly = payoff > 0 && isFinite(payoff) ? (wKelly - (1 - wKelly) / payoff) : 0; if (kelly < 0) kelly = 0;
     // streaks + drawdown over chronological equity
     var chrono = rows.slice().sort(byDateAsc);
+    // A breakeven trade ends both streaks, matching the current-streak scan
+    // below (which also stops at the first breakeven it finds).
     var maxW = 0, maxL = 0, cw = 0, cl = 0;
     chrono.forEach(function (t) {
       if (t.pnl > 0) { cw++; cl = 0; if (cw > maxW) maxW = cw; }
       else if (t.pnl < 0) { cl++; cw = 0; if (cl > maxL) maxL = cl; }
+      else { cw = 0; cl = 0; }
     });
     var cur = 0;
     for (var i = chrono.length - 1; i >= 0; i--) {
@@ -1245,7 +1295,7 @@
 
   // ---------- charts (inline SVG) ----------
   function equityPts() {
-    var arr = state.trades.slice().sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+    var arr = state.trades.slice().sort(byDateAsc);
     var c = 0;
     return arr.map(function (t, i) { c += t.pnl; return { i: i, v: c }; });
   }
@@ -2882,6 +2932,7 @@
       body.push(h("div", { style: "background:#FBFAF7;border:1px solid #ECE7DD;border-radius:10px;padding:12px 14px;font-size:13px;" },
         h("div", { style: "font-weight:600;" + (prev.valid.length ? "color:#16915B;" : "color:#A39E94;") }, prev.valid.length + " operación(es) lista(s) para importar"),
         prev.invalid ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.invalid + " fila(s) con error se omitirán") : null,
+        prev.dupCount ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.dupCount + " fila(s) parecen duplicar una operación ya existente (misma fecha, símbolo, dirección, contratos y precios) — se importarán igual, revísalas primero") : null,
         prev.errors.length ? h("div", { style: "margin-top:6px;color:#A39E94;font-size:12px;font-family:'Geist Mono',monospace;white-space:pre-line;" }, prev.errors.join("\n")) : null));
     }
     var canImport = !im.busy && prev && prev.valid.length > 0;
@@ -2898,12 +2949,15 @@
     var editing = state.editId != null;
     var previewSpan = h("span", { style: "font-family:'Geist Mono',monospace;font-size:18px;font-weight:600;" });
     var saveBtn = h("button", { onClick: saveTrade }, editing ? "Guardar cambios" : "Guardar operación");
+    var symbolWarning = h("div", { style: "display:none;font-size:11.5px;color:#8A5A00;background:#FFF6E2;border:1px solid #F2D49A;border-radius:9px;padding:9px 11px;line-height:1.35;" },
+      "Símbolo no reconocido: no tenemos su valor por punto, así que el P&L se calcula asumiendo 1× (1 punto = $1). Verifica el resultado manualmente.");
     function refresh() {
       var dp = draftPnl();
       previewSpan.textContent = dp.valid ? signed(dp.pnl) : "—";
       previewSpan.style.cssText = "font-family:'Geist Mono',monospace;font-size:18px;font-weight:600;" + (dp.valid ? pnlColor(dp.pnl) : "color:#A39E94;");
       var valid = isSaveValid();
       saveBtn.style.cssText = "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (valid ? "background:#16181C;color:#fff;" : "background:#CFC9BD;color:#fff;cursor:not-allowed;");
+      symbolWarning.style.display = (d.type === "future" && d.symbol && !knownPV({ symbol: d.symbol, type: d.type })) ? "block" : "none";
     }
     var d = state.draft;
     var note = h("textarea", { rows: "3", placeholder: "¿Qué viste? ¿Seguiste el plan?", style: "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;line-height:1.5;resize:vertical;", onInput: function (e) { d.note = e.target.value; } });
@@ -2942,6 +2996,7 @@
       })(),
       h("div", { style: "display:flex;align-items:center;justify-content:space-between;background:#FBFAF7;border:1px solid #ECE7DD;border-radius:11px;padding:13px 16px;" },
         h("span", { style: "font-size:12.5px;color:#807B72;" }, "P&L estimado"), previewSpan),
+      symbolWarning,
     ];
     var footer = [
       h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #E2DDD3;background:#fff;font-weight:600;font-size:13.5px;", hoverBg: "#FAF8F4", onClick: closeAdd }, "Cancelar"),
