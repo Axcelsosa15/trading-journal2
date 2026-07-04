@@ -20,5 +20,13 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Syntax check (app.js, sw.js)
         run: npm run check
+      - name: Guard against app.js being gutted
+        run: |
+          lines=$(wc -l < app.js)
+          echo "app.js has $lines lines"
+          if [ "$lines" -lt 2000 ]; then
+            echo "::error::app.js has only $lines lines (expected 2000+) — a bad merge likely collapsed the main app file. This exact regression took production down before (PR #61)."
+            exit 1
+          fi
       - name: Headless smoke tests
         run: npm test
