@@ -109,7 +109,7 @@
     "¿Estoy operando con calma, sin FOMO ni revancha?",
   ];
   // Trade setups offered across the app (add modal + filters). Free text in the DB.
-  var SETUPS = ["Ruptura", "Reversión", "Pullback", "EMA/VWAP"];
+  var SETUPS = ["Ruptura", "Reversión", "Pullback", "EMA/VWAP", "EMA 10/20 Scalping"];
   // Official pre-trade checklist for the NQ EMA/VWAP system (research protocol v1.0).
   var EMA_VWAP_CHECKLIST = [
     "¿Precio del lado correcto de la EMA200 (a favor de la tendencia)?",
@@ -118,6 +118,18 @@
     "¿Pullback que toca la EMA20 o la EMA55?",
     "¿Volumen actual por encima de la media de las últimas 20 velas?",
     "¿Cruce de la EMA3 sobre/bajo la EMA10 como gatillo de entrada?",
+  ];
+  // Pre-trade checklist for the EMA 10/20 scalping system (research protocol v1.0).
+  // Designed to filter out low-quality signals: trend + location + volume + session + risk defined up front.
+  var EMA_10_20_CHECKLIST = [
+    "¿EMA10 y EMA20 alineadas a favor de la operación (10 sobre 20 en largo; 10 bajo 20 en corto)?",
+    "¿Precio del lado correcto de la EMA50 o el VWAP en el timeframe base?",
+    "¿Estoy dentro de mi ventana horaria de scalping (evito la apertura de los primeros minutos, la hora de comida y noticias)?",
+    "¿Pullback controlado a la zona EMA10/20 con vela de rechazo, sin vela grande en contra?",
+    "¿Volumen de la vela de entrada por encima de la media de las últimas 20 velas?",
+    "¿Cruce EMA10/EMA20 a favor de la tendencia como gatillo de entrada (no en medio del rango)?",
+    "¿Stop definido en el mín./máx. de las últimas 3-5 velas y objetivo mínimo de 1.5R antes de entrar?",
+    "¿Sigo dentro de mi límite de operaciones y pérdida diaria? (si no, no hay trade)",
   ];
   function defaultSettings() {
     return { rules: { maxTradesPerDay: "", maxDailyLoss: "", maxWeeklyLoss: "" }, checklist: DEFAULT_CHECKLIST.slice(), onboardingDone: false };
@@ -2627,6 +2639,14 @@
     state.settingsSaved = false;
     render();
   }
+  // Append the EMA 10/20 scalping system's pre-trade checks to the user's checklist (dedup).
+  function loadEma1020Checklist() {
+    var cur = (state.settings.checklist || []).slice();
+    EMA_10_20_CHECKLIST.forEach(function (q) { if (cur.indexOf(q) < 0) cur.push(q); });
+    state.settings.checklist = cur;
+    state.settingsSaved = false;
+    render();
+  }
   function settingsView() {
     var s = state.settings;
     var inBase = "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;width:100%;";
@@ -2675,6 +2695,19 @@
           h("li", null, "Stop: mín./máx. de las últimas 5 velas · TP1 1R (50%) · TP2 2R (50%) · todo medido en R.")),
         h("button", { style: "background:#fff;border:1px solid #E2DDD3;font-weight:600;font-size:13px;padding:10px 16px;border-radius:9px;", hoverBg: "#FAF8F4", onClick: loadStrategyChecklist },
           icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:6px;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'), "Añadir checklist del sistema EMA/VWAP")),
+      h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:22px;" },
+        h("div", { style: "display:flex;align-items:center;gap:8px;margin-bottom:3px;" },
+          icon('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#B0663D" stroke-width="2"><path d="M3 3v18h18"/><path d="M18.7 8 12.3 14.4 9.5 11.6 5 16.1"/></svg>'),
+          h("div", { style: "font-size:15px;font-weight:600;" }, "Sistema Scalping · EMA 10/20")),
+        h("div", { style: "font-size:12.5px;color:#A39E94;margin-bottom:12px;max-width:560px;" }, "Cruce de EMA10/EMA20 en timeframes cortos (1-5 min), filtrado por tendencia, volumen y horario para evitar señales de baja calidad. Disponible como “EMA 10/20 Scalping” en el Setup de cada operación; agrupa su rendimiento en Analítica e Insights."),
+        h("ul", { style: "font-size:12.5px;color:#54514A;line-height:1.7;margin:0 0 14px;padding-left:18px;" },
+          h("li", null, "Tendencia: EMA10 y EMA20 alineadas + precio del lado correcto de EMA50/VWAP. No operar cuando están planas o entrelazadas."),
+          h("li", null, "Entrada: pullback a la zona EMA10/20 con vela de rechazo + volumen > media 20 + cruce EMA10/EMA20 a favor de la tendencia."),
+          h("li", null, "Salida: stop en el mín./máx. de las últimas 3-5 velas · TP1 1R (50%) · resto con trailing en la EMA10 · mínimo 1.5R por operación."),
+          h("li", null, "Horario: solo dentro de tu ventana de mayor liquidez; evita los primeros minutos de apertura, la hora de comida y noticias de alto impacto."),
+          h("li", null, "Riesgo: define arriba tus límites de operaciones/día y pérdida diaria — el scalping vive y muere por la disciplina de riesgo, no por la señal.")),
+        h("button", { style: "background:#fff;border:1px solid #E2DDD3;font-weight:600;font-size:13px;padding:10px 16px;border-radius:9px;", hoverBg: "#FAF8F4", onClick: loadEma1020Checklist },
+          icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:6px;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'), "Añadir checklist de scalping EMA 10/20")),
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:22px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;" },
         h("div", null,
           h("div", { style: "font-size:15px;font-weight:600;margin-bottom:3px;" }, "Seguridad · Verificación en dos pasos (2FA)"),
