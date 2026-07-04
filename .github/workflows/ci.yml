@@ -20,5 +20,13 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Syntax check (app.js, sw.js)
         run: npm run check
+      - name: Guard against app.js truncation
+        run: |
+          lines=$(wc -l < app.js)
+          echo "app.js has $lines lines"
+          if [ "$lines" -lt 2000 ]; then
+            echo "::error file=app.js::app.js has only $lines lines (expected at least 2000). This looks like a truncated/gutted file from a bad merge — refusing to proceed."
+            exit 1
+          fi
       - name: Headless smoke tests
         run: npm test
