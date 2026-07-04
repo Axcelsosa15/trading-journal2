@@ -500,10 +500,10 @@
   }
   function exportCSV(rows) {
     if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
-    var headers = ["Fecha", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "Setup", "Emoción", "Valoración", "Cuenta", "PnL", "Notas"];
+    var headers = ["Fecha", "Hora UTC", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "Setup", "Emoción", "Valoración", "Cuenta", "PnL", "Notas"];
     var lines = [headers.map(csvCell).join(",")];
     rows.forEach(function (t) {
-      lines.push([t.date, t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl, t.note].map(csvCell).join(","));
+      lines.push([t.date, t.time || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl, t.note].map(csvCell).join(","));
     });
     var csv = "﻿" + lines.join("\r\n"); // BOM so Excel reads accents correctly
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -705,10 +705,25 @@
     });
     return map;
   }
+  // Broker/prop-firm CSV exports vary in negative and decimal notation:
+  // "(123.45)" (accounting negative) and "1.234,56" (EU thousands/decimal)
+  // both need to parse to the right signed number, not just strip symbols.
   function importNum(v) {
     if (v == null) return NaN;
-    var s = String(v).replace(/[^\d.,\-]/g, "").replace(/,(?=\d{3}\b)/g, "").replace(",", ".");
-    return parseFloat(s);
+    var raw = String(v).trim();
+    if (!raw) return NaN;
+    var negParen = /^\(.*\)$/.test(raw);
+    var s = raw.replace(/[^\d.,\-]/g, "");
+    var lastComma = s.lastIndexOf(","), lastDot = s.lastIndexOf(".");
+    if (lastComma > -1 && lastDot > -1) {
+      s = lastComma > lastDot ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+    } else if (lastComma > -1) {
+      var fracLen = s.length - lastComma - 1;
+      s = (fracLen === 1 || fracLen === 2) ? s.replace(",", ".") : s.replace(/,/g, "");
+    }
+    var n = parseFloat(s);
+    if (isNaN(n)) return NaN;
+    return negParen ? -Math.abs(n) : n;
   }
   function importSide(v) {
     var s = String(v || "").trim().toLowerCase();
@@ -899,6 +914,7 @@
   async function saveTrade() {
     var d = state.draft;
     if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
+    if (!isFinite(Number(d.entry)) || !isFinite(Number(d.exit))) return;
     var pnl = pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
     // Upload a freshly attached screenshot first (online only); otherwise keep
     // whatever path the trade already had.
@@ -1162,7 +1178,15 @@
     });
     return m;
   }
-  function byDateAsc(a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); }
+  // Same-day trades sort by time too, so multi-trade days replay in the order
+  // they actually happened (streaks, drawdown, and the equity curve all rely
+  // on this chronological order, not just calendar-day order).
+  function byDateAsc(a, b) {
+    if (a.date < b.date) return -1;
+    if (a.date > b.date) return 1;
+    var at = a.time || "", bt = b.time || "";
+    return at < bt ? -1 : (at > bt ? 1 : 0);
+  }
   // The R unit (1R) when no per-trade stop is recorded: the average loss size.
   function rUnitOf(rows) {
     var losses = rows.filter(function (t) { return t.pnl < 0; }).map(function (t) { return t.pnl; });
@@ -1203,6 +1227,7 @@
     chrono.forEach(function (t) {
       if (t.pnl > 0) { cw++; cl = 0; if (cw > maxW) maxW = cw; }
       else if (t.pnl < 0) { cl++; cw = 0; if (cl > maxL) maxL = cl; }
+      else { cw = 0; cl = 0; } // breakeven breaks both streaks, matching curStreak below
     });
     var cur = 0;
     for (var i = chrono.length - 1; i >= 0; i--) {
@@ -1221,7 +1246,12 @@
     var maes = rows.filter(function (t) { return t.mae !== "" && t.mae != null; }).map(function (t) { return Math.abs(Number(t.mae)); });
     var mfes = rows.filter(function (t) { return t.mfe !== "" && t.mfe != null; }).map(function (t) { return Math.abs(Number(t.mfe)); });
     var avgMae = maes.length ? mean(maes) : null, avgMfe = mfes.length ? mean(mfes) : null;
-    var edge = (avgMae && avgMae > 0 && avgMfe != null) ? avgMfe / avgMae : null;
+    // Edge ratio compares MFE vs MAE on the *same* trades — mixing independent
+    // averages from trades missing one field or the other isn't a valid ratio.
+    var paired = rows.filter(function (t) { return t.mae !== "" && t.mae != null && t.mfe !== "" && t.mfe != null; });
+    var pairedMae = paired.length ? mean(paired.map(function (t) { return Math.abs(Number(t.mae)); })) : null;
+    var pairedMfe = paired.length ? mean(paired.map(function (t) { return Math.abs(Number(t.mfe)); })) : null;
+    var edge = (pairedMae && pairedMae > 0 && pairedMfe != null) ? pairedMfe / pairedMae : null;
     var byDay = {}; rows.forEach(function (t) { byDay[t.date] = (byDay[t.date] || 0) + t.pnl; });
     var dayVals = Object.keys(byDay).map(function (k) { return byDay[k]; });
     var greenDays = dayVals.filter(function (x) { return x > 0; }).length;
@@ -1260,7 +1290,7 @@
 
   // ---------- charts (inline SVG) ----------
   function equityPts() {
-    var arr = state.trades.slice().sort(function (a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+    var arr = state.trades.slice().sort(byDateAsc);
     var c = 0;
     return arr.map(function (t, i) { c += t.pnl; return { i: i, v: c }; });
   }
@@ -1939,24 +1969,24 @@
     var symbolOpts = Object.keys(state.trades.reduce(function (acc, t) { acc[t.symbol] = 1; return acc; }, {})).sort();
 
     var fSeg = function (v, label) {
-      return h("button", { style: "padding:6px 14px;border-radius:7px;font-size:12.5px;font-weight:600;" + (state.fResult === v ? "background:#fff;color:#16181C;box-shadow:0 1px 2px rgba(0,0,0,.08);" : "background:none;color:#807B72;"), onClick: function () { state.fResult = v; render(); } }, label);
+      return h("button", { style: "padding:6px 14px;border-radius:7px;font-size:12.5px;font-weight:600;" + (state.fResult === v ? "background:#fff;color:#16181C;box-shadow:0 1px 2px rgba(0,0,0,.08);" : "background:none;color:#807B72;"), onClick: function () { state.fResult = v; state.tradesShown = 150; render(); } }, label);
     };
-    var symbolSelect = h("select", { style: "font-size:12.5px;padding:8px 11px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;", onChange: function (ev) { state.fSymbol = ev.target.value; render(); } },
+    var symbolSelect = h("select", { style: "font-size:12.5px;padding:8px 11px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;", onChange: function (ev) { state.fSymbol = ev.target.value; state.tradesShown = 150; render(); } },
       [h("option", { value: "all" }, "Todos los símbolos")].concat(symbolOpts.map(function (sy) { return h("option", { value: sy }, sy); })));
     symbolSelect.value = state.fSymbol;
-    var setupSelect = h("select", { style: "font-size:12.5px;padding:8px 11px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;", onChange: function (ev) { state.fSetup = ev.target.value; render(); } },
+    var setupSelect = h("select", { style: "font-size:12.5px;padding:8px 11px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;", onChange: function (ev) { state.fSetup = ev.target.value; state.tradesShown = 150; render(); } },
       [h("option", { value: "all" }, "Todos los setups")].concat(SETUPS.map(function (x) { return h("option", { value: x }, x); })));
     setupSelect.value = state.fSetup;
     var accountSelect = null;
     if (state.accounts.length) {
-      accountSelect = h("select", { style: "font-size:12.5px;padding:8px 11px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;", onChange: function (ev) { state.fAccount = ev.target.value; render(); } },
+      accountSelect = h("select", { style: "font-size:12.5px;padding:8px 11px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;", onChange: function (ev) { state.fAccount = ev.target.value; state.tradesShown = 150; render(); } },
         [h("option", { value: "all" }, "Todas las cuentas"), h("option", { value: "none" }, "Sin cuenta")].concat(state.accounts.map(function (a) { return h("option", { value: a.id }, a.name); })));
       accountSelect.value = state.fAccount;
     }
     var allTags = Object.keys(state.trades.reduce(function (acc, t) { (t.tags || []).forEach(function (tg) { acc[tg] = 1; }); return acc; }, {})).sort();
     var tagSelect = null;
     if (allTags.length) {
-      tagSelect = h("select", { style: "font-size:12.5px;padding:8px 11px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;", onChange: function (ev) { state.fTag = ev.target.value; render(); } },
+      tagSelect = h("select", { style: "font-size:12.5px;padding:8px 11px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;font-weight:500;cursor:pointer;", onChange: function (ev) { state.fTag = ev.target.value; state.tradesShown = 150; render(); } },
         [h("option", { value: "all" }, "Todas las etiquetas")].concat(allTags.map(function (tg) { return h("option", { value: tg }, tg); })));
       tagSelect.value = state.fTag;
     }
@@ -2077,7 +2107,7 @@
     var overall = exp(T);
     var band = Math.max(20, Math.abs(overall) * 0.5); // significance threshold
     var WD = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
-    var chrono = T.slice().sort(function (a, b) { var d = byDateAsc(a, b); return d || ((a.time || "") < (b.time || "") ? -1 : ((a.time || "") > (b.time || "") ? 1 : 0)); });
+    var chrono = T.slice().sort(byDateAsc);
 
     // Best/worst edge across a {key:{key,pnl,count,wins}} grouping.
     function edge(g, minN, kind, labelFn) {
@@ -2928,7 +2958,7 @@
       h("div", { style: "display:grid;grid-template-columns:1.2fr 1fr 0.9fr;gap:14px;" },
         field("Símbolo", fieldInput(d, "symbol", { placeholder: "MES, NQ, SPY…", style: inMono + "text-transform:uppercase;", onInput: function (e) { d.symbol = e.target.value; refresh(); } })),
         field("Fecha", fieldInput(d, "date", { type: "date", style: inMono })),
-        field("Hora (opcional)", fieldInput(d, "time", { type: "time", style: inMono }))),
+        field("Hora UTC (opcional)", fieldInput(d, "time", { type: "time", style: inMono }))),
       h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
         field("Instrumento", fieldSelect(d, "type", [["future", "Futuro"], ["option", "Opción"]], refresh)),
         field("Dirección", fieldSelect(d, "side", [["long", "Largo"], ["short", "Corto"]], refresh))),

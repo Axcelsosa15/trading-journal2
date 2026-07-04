@@ -57,6 +57,7 @@ aplicará cuando existan apps nativas; hoy el cliente móvil es la **PWA**).
 | F-07 | DoS / WAF | Bajo | Pendiente (infra) | Cloudflare WAF + rate-limiting. |
 | F-08 | RLS init-plan | Bajo | **Resuelto** | `auth.uid()` → `(select auth.uid())` en las 16 políticas. |
 | F-09 | DAST/SAST en CI | Info | **Parcial** | Workflow ZAP añadido (`.github/workflows/zap.yml`). |
+| F-10 | HTML injection en research-polish.js | Bajo | **Resuelto** | `groupRows()` insertaba una etiqueta de trade sin escapar en `innerHTML` cuando no estaba en la lista blanca de labels (VWAP/flow). CSP (`script-src` sin `unsafe-inline`) ya bloqueaba ejecución de `<script>`/`onerror`, pero permitía inyección de marcado. Añadido `escapeHtml()`. |
 
 ## F-04 — Aplicar SRI al SDK de Supabase (pendiente)
 Calcular el hash de la versión exacta y fijarla en `index.html`:
