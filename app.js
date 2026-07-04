@@ -146,9 +146,9 @@
     fResult: "all", fSymbol: "all", fSetup: "all", fAccount: "all", fTag: "all",
     fDateFrom: "", fDateTo: "", fPnlMin: "", fPnlMax: "", fRating: "all",
     calMonth: thisMonth(),
-    showAdd: false, editId: null, draft: blankDraft(),
-    showJournalAdd: false, jdraft: blankJournalDraft(), journalEditId: null, jSearch: "", jMood: "all",
-    showAccountAdd: false, accountEditId: null, accountDraft: blankAccountDraft(),
+    showAdd: false, editId: null, draft: blankDraft(), savingTrade: false,
+    showJournalAdd: false, jdraft: blankJournalDraft(), journalEditId: null, jSearch: "", jMood: "all", savingJournal: false, savingQuickNote: false,
+    showAccountAdd: false, accountEditId: null, accountDraft: blankAccountDraft(), savingAccount: false,
     settings: defaultSettings(), settingsSaved: false,
     showChecklist: false, checkState: [],
     quickNote: "", quickMood: "Enfocado",
@@ -899,37 +899,44 @@
   async function saveTrade() {
     var d = state.draft;
     if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
-    var pnl = pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
-    // Upload a freshly attached screenshot first (online only); otherwise keep
-    // whatever path the trade already had.
-    var shotPath = d.screenshot_path || null;
-    if (d._imageFile) { var p = await uploadScreenshot(d._imageFile); if (p) shotPath = p; }
-    var row = { date: d.date, time: d.time || null, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
-    if (state.editId) {
-      if (!isOnline()) { window.alert("Necesitas conexión para editar una operación. Las operaciones nuevas sí se guardan sin conexión."); return; }
-      var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
-      if (up.error) { window.alert("No se pudo actualizar la operación: " + up.error.message); return; }
-      var updated = coerceTrade(up.data);
-      state.trades = state.trades.map(function (t) { return t.id === updated.id ? updated : t; });
-    } else if (!isOnline()) {
-      // Offline: optimistic insert + queue for sync when back online.
-      var tempId = "tmp_" + Date.now();
-      state.trades = [coerceTrade(Object.assign({ id: tempId }, row))].concat(state.trades);
-      enqueue("trades", row, tempId);
-    } else {
-      try {
-        var res = await SB.from("trades").insert(row).select().single();
-        if (res.error) throw res.error;
-        state.trades = [coerceTrade(res.data)].concat(state.trades);
-      } catch (e) {
-        var tid = "tmp_" + Date.now();
-        state.trades = [coerceTrade(Object.assign({ id: tid }, row))].concat(state.trades);
-        enqueue("trades", row, tid);
+    if (state.savingTrade) return; // guard against duplicate inserts from a double click / double Enter
+    state.savingTrade = true; renderModal();
+    try {
+      var pnl = pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
+      // Upload a freshly attached screenshot first (online only); otherwise keep
+      // whatever path the trade already had.
+      var shotPath = d.screenshot_path || null;
+      if (d._imageFile) { var p = await uploadScreenshot(d._imageFile); if (p) shotPath = p; }
+      var row = { date: d.date, time: d.time || null, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
+      if (state.editId) {
+        if (!isOnline()) { window.alert("Necesitas conexión para editar una operación. Las operaciones nuevas sí se guardan sin conexión."); return; }
+        var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
+        if (up.error) { window.alert("No se pudo actualizar la operación: " + up.error.message); return; }
+        var updated = coerceTrade(up.data);
+        state.trades = state.trades.map(function (t) { return t.id === updated.id ? updated : t; });
+      } else if (!isOnline()) {
+        // Offline: optimistic insert + queue for sync when back online.
+        var tempId = "tmp_" + Date.now();
+        state.trades = [coerceTrade(Object.assign({ id: tempId }, row))].concat(state.trades);
+        enqueue("trades", row, tempId);
+      } else {
+        try {
+          var res = await SB.from("trades").insert(row).select().single();
+          if (res.error) throw res.error;
+          state.trades = [coerceTrade(res.data)].concat(state.trades);
+        } catch (e) {
+          var tid = "tmp_" + Date.now();
+          state.trades = [coerceTrade(Object.assign({ id: tid }, row))].concat(state.trades);
+          enqueue("trades", row, tid);
+        }
       }
+      saveCache();
+      closeAdd();
+      render();
+    } finally {
+      state.savingTrade = false;
+      if (state.showAdd) renderModal();
     }
-    saveCache();
-    closeAdd();
-    render();
   }
   function openEdit(t) {
     state.editId = t.id;
@@ -958,32 +965,39 @@
   async function saveJournal() {
     var d = state.jdraft;
     if (!d.title.trim()) return;
-    var row = { date: d.date, mood: d.mood, title: d.title.trim(), body: d.body, lesson: d.lesson };
-    if (state.journalEditId) {
-      if (!isOnline()) { window.alert("Necesitas conexión para editar una entrada."); return; }
-      var up = await SB.from("journal").update(row).eq("id", state.journalEditId).select().single();
-      if (up.error) { window.alert("No se pudo actualizar la entrada: " + up.error.message); return; }
-      var u = coerceJournal(up.data);
-      state.journal = state.journal.map(function (j) { return j.id === u.id ? u : j; });
-      saveCache(); closeJournalAdd(); render(); return;
-    }
-    if (!isOnline()) {
-      var tid = "tmp_" + Date.now();
-      state.journal = [coerceJournal(Object.assign({ id: tid }, row))].concat(state.journal);
-      enqueue("journal", row, tid); saveCache(); closeJournalAdd(); render(); return;
-    }
+    if (state.savingJournal) return; // guard against duplicate inserts from a double click
+    state.savingJournal = true; renderModal();
     try {
-      var res = await SB.from("journal").insert(row).select().single();
-      if (res.error) throw res.error;
-      state.journal = [coerceJournal(res.data)].concat(state.journal);
-    } catch (e) {
-      var tid2 = "tmp_" + Date.now();
-      state.journal = [coerceJournal(Object.assign({ id: tid2 }, row))].concat(state.journal);
-      enqueue("journal", row, tid2);
+      var row = { date: d.date, mood: d.mood, title: d.title.trim(), body: d.body, lesson: d.lesson };
+      if (state.journalEditId) {
+        if (!isOnline()) { window.alert("Necesitas conexión para editar una entrada."); return; }
+        var up = await SB.from("journal").update(row).eq("id", state.journalEditId).select().single();
+        if (up.error) { window.alert("No se pudo actualizar la entrada: " + up.error.message); return; }
+        var u = coerceJournal(up.data);
+        state.journal = state.journal.map(function (j) { return j.id === u.id ? u : j; });
+        saveCache(); closeJournalAdd(); render(); return;
+      }
+      if (!isOnline()) {
+        var tid = "tmp_" + Date.now();
+        state.journal = [coerceJournal(Object.assign({ id: tid }, row))].concat(state.journal);
+        enqueue("journal", row, tid); saveCache(); closeJournalAdd(); render(); return;
+      }
+      try {
+        var res = await SB.from("journal").insert(row).select().single();
+        if (res.error) throw res.error;
+        state.journal = [coerceJournal(res.data)].concat(state.journal);
+      } catch (e) {
+        var tid2 = "tmp_" + Date.now();
+        state.journal = [coerceJournal(Object.assign({ id: tid2 }, row))].concat(state.journal);
+        enqueue("journal", row, tid2);
+      }
+      saveCache();
+      closeJournalAdd();
+      render();
+    } finally {
+      state.savingJournal = false;
+      if (state.showJournalAdd) renderModal();
     }
-    saveCache();
-    closeJournalAdd();
-    render();
   }
   async function deleteJournal(id) {
     if (String(id).slice(0, 4) === "tmp_") {
@@ -1001,24 +1015,30 @@
   async function saveJournalQuick() {
     var text = (state.quickNote || "").trim();
     if (!text) return;
-    var row = { date: todayISO(), mood: state.quickMood, title: text, body: "", lesson: "" };
-    if (!isOnline()) {
-      var tid = "tmp_" + Date.now();
-      state.journal = [coerceJournal(Object.assign({ id: tid }, row))].concat(state.journal);
-      enqueue("journal", row, tid); state.quickNote = ""; saveCache(); render(); return;
-    }
+    if (state.savingQuickNote) return; // guard against duplicate inserts from a double click / double Enter
+    state.savingQuickNote = true;
     try {
-      var res = await SB.from("journal").insert(row).select().single();
-      if (res.error) throw res.error;
-      state.journal = [coerceJournal(res.data)].concat(state.journal);
-    } catch (e) {
-      var tid2 = "tmp_" + Date.now();
-      state.journal = [coerceJournal(Object.assign({ id: tid2 }, row))].concat(state.journal);
-      enqueue("journal", row, tid2);
+      var row = { date: todayISO(), mood: state.quickMood, title: text, body: "", lesson: "" };
+      if (!isOnline()) {
+        var tid = "tmp_" + Date.now();
+        state.journal = [coerceJournal(Object.assign({ id: tid }, row))].concat(state.journal);
+        enqueue("journal", row, tid); state.quickNote = ""; saveCache(); render(); return;
+      }
+      try {
+        var res = await SB.from("journal").insert(row).select().single();
+        if (res.error) throw res.error;
+        state.journal = [coerceJournal(res.data)].concat(state.journal);
+      } catch (e) {
+        var tid2 = "tmp_" + Date.now();
+        state.journal = [coerceJournal(Object.assign({ id: tid2 }, row))].concat(state.journal);
+        enqueue("journal", row, tid2);
+      }
+      state.quickNote = "";
+      saveCache();
+      render();
+    } finally {
+      state.savingQuickNote = false;
     }
-    state.quickNote = "";
-    saveCache();
-    render();
   }
   async function dismissOnboarding() {
     state.settings.onboardingDone = true;
@@ -1034,25 +1054,32 @@
     var d = state.accountDraft;
     if (!d.name.trim()) return;
     if (!isOnline()) { window.alert("Necesitas conexión para crear o editar cuentas."); return; }
-    var row = {
-      name: d.name.trim(), kind: d.kind, firm: d.firm || null, balance: Number(d.balance) || 0, currency: d.currency || "USD",
-      phase: d.phase || null, status: d.status,
-      profit_target: d.profit_target === "" ? null : Number(d.profit_target),
-      max_drawdown: d.max_drawdown === "" ? null : Number(d.max_drawdown), notes: d.notes,
-    };
-    if (state.accountEditId) {
-      var up = await SB.from("accounts").update(row).eq("id", state.accountEditId).select().single();
-      if (up.error) { window.alert("No se pudo actualizar la cuenta: " + up.error.message); return; }
-      var u = coerceAccount(up.data);
-      state.accounts = state.accounts.map(function (a) { return a.id === u.id ? u : a; });
-    } else {
-      var res = await SB.from("accounts").insert(row).select().single();
-      if (res.error) { window.alert("No se pudo crear la cuenta: " + res.error.message); return; }
-      state.accounts = [coerceAccount(res.data)].concat(state.accounts);
+    if (state.savingAccount) return; // guard against duplicate inserts from a double click
+    state.savingAccount = true; renderModal();
+    try {
+      var row = {
+        name: d.name.trim(), kind: d.kind, firm: d.firm || null, balance: Number(d.balance) || 0, currency: d.currency || "USD",
+        phase: d.phase || null, status: d.status,
+        profit_target: d.profit_target === "" ? null : Number(d.profit_target),
+        max_drawdown: d.max_drawdown === "" ? null : Number(d.max_drawdown), notes: d.notes,
+      };
+      if (state.accountEditId) {
+        var up = await SB.from("accounts").update(row).eq("id", state.accountEditId).select().single();
+        if (up.error) { window.alert("No se pudo actualizar la cuenta: " + up.error.message); return; }
+        var u = coerceAccount(up.data);
+        state.accounts = state.accounts.map(function (a) { return a.id === u.id ? u : a; });
+      } else {
+        var res = await SB.from("accounts").insert(row).select().single();
+        if (res.error) { window.alert("No se pudo crear la cuenta: " + res.error.message); return; }
+        state.accounts = [coerceAccount(res.data)].concat(state.accounts);
+      }
+      saveCache();
+      closeAccountAdd();
+      render();
+    } finally {
+      state.savingAccount = false;
+      if (state.showAccountAdd) renderModal();
     }
-    saveCache();
-    closeAccountAdd();
-    render();
   }
   async function deleteAccount() {
     var id = state.accountEditId;
@@ -2612,8 +2639,8 @@
     moodSel.value = state.quickMood;
     var input = h("input", { placeholder: "Nota rápida de hoy… (Enter para guardar)", style: "flex:1;min-width:0;padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;", onInput: function (e) { state.quickNote = e.target.value; } });
     input.value = state.quickNote;
-    input.addEventListener("keydown", function (e) { if (e.key === "Enter") saveJournalQuick(); });
-    var btn = h("button", { style: "flex:none;background:#16181C;color:#fff;font-weight:600;font-size:13px;padding:10px 16px;border-radius:9px;", onClick: saveJournalQuick }, "Guardar");
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter" && !state.savingQuickNote) saveJournalQuick(); });
+    var btn = h("button", { style: "flex:none;background:#16181C;color:#fff;font-weight:600;font-size:13px;padding:10px 16px;border-radius:9px;", onClick: function () { if (!state.savingQuickNote) saveJournalQuick(); } }, "Guardar");
     return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;" },
       moodSel, input, btn);
   }
@@ -2913,13 +2940,14 @@
     var inMono = "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;font-family:'Geist Mono',monospace;";
     var editing = state.editId != null;
     var previewSpan = h("span", { style: "font-family:'Geist Mono',monospace;font-size:18px;font-weight:600;" });
-    var saveBtn = h("button", { onClick: saveTrade }, editing ? "Guardar cambios" : "Guardar operación");
+    var saveBtn = h("button", { onClick: function () { if (!state.savingTrade) saveTrade(); } }, editing ? "Guardar cambios" : "Guardar operación");
     function refresh() {
       var dp = draftPnl();
       previewSpan.textContent = dp.valid ? signed(dp.pnl) : "—";
       previewSpan.style.cssText = "font-family:'Geist Mono',monospace;font-size:18px;font-weight:600;" + (dp.valid ? pnlColor(dp.pnl) : "color:#A39E94;");
-      var valid = isSaveValid();
+      var valid = isSaveValid() && !state.savingTrade;
       saveBtn.style.cssText = "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (valid ? "background:#16181C;color:#fff;" : "background:#CFC9BD;color:#fff;cursor:not-allowed;");
+      saveBtn.textContent = state.savingTrade ? "Guardando…" : (editing ? "Guardar cambios" : "Guardar operación");
     }
     var d = state.draft;
     var note = h("textarea", { rows: "3", placeholder: "¿Qué viste? ¿Seguiste el plan?", style: "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;line-height:1.5;resize:vertical;", onInput: function (e) { d.note = e.target.value; } });
@@ -2971,10 +2999,11 @@
   function journalModal() {
     var d = state.jdraft;
     var editing = state.journalEditId != null;
-    var saveBtn = h("button", { onClick: saveJournal }, editing ? "Guardar cambios" : "Guardar entrada");
+    var saveBtn = h("button", { onClick: function () { if (!state.savingJournal) saveJournal(); } }, editing ? "Guardar cambios" : "Guardar entrada");
     function refresh() {
-      var valid = d.title.trim().length > 0;
+      var valid = d.title.trim().length > 0 && !state.savingJournal;
       saveBtn.style.cssText = "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (valid ? "background:#16181C;color:#fff;" : "background:#CFC9BD;color:#fff;cursor:not-allowed;");
+      saveBtn.textContent = state.savingJournal ? "Guardando…" : (editing ? "Guardar cambios" : "Guardar entrada");
     }
     var base = "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;";
     var bodyTa = h("textarea", { rows: "4", placeholder: "¿Cómo fue la sesión? ¿Seguiste el plan?", style: base + "line-height:1.5;resize:vertical;", onInput: function (e) { d.body = e.target.value; } });
@@ -3004,10 +3033,11 @@
     var d = state.accountDraft;
     var base = "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;";
     var mono = base + "font-family:'Geist Mono',monospace;";
-    var saveBtn = h("button", { onClick: saveAccount }, editing ? "Guardar cambios" : "Crear cuenta");
+    var saveBtn = h("button", { onClick: function () { if (!state.savingAccount) saveAccount(); } }, editing ? "Guardar cambios" : "Crear cuenta");
     function refresh() {
-      var valid = d.name.trim().length > 0;
+      var valid = d.name.trim().length > 0 && !state.savingAccount;
       saveBtn.style.cssText = "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (valid ? "background:#16181C;color:#fff;" : "background:#CFC9BD;color:#fff;cursor:not-allowed;");
+      saveBtn.textContent = state.savingAccount ? "Guardando…" : (editing ? "Guardar cambios" : "Crear cuenta");
     }
     var notesTa = h("textarea", { rows: "2", placeholder: "Reglas, notas…", style: base + "line-height:1.5;resize:vertical;", onInput: function (e) { d.notes = e.target.value; } });
     notesTa.value = d.notes;
