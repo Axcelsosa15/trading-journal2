@@ -272,7 +272,6 @@
     if (!isOnline() || !state.user) return;
     var q = getOutbox();
     if (!q.length) { state.pending = 0; return; }
-    var remaining = [];
     for (var i = 0; i < q.length; i++) {
       var item = q[i];
       try {
@@ -280,10 +279,14 @@
         if (res.error) throw res.error;
         if (item.table === "trades") { var ct = coerceTrade(res.data); state.trades = state.trades.map(function (t) { return t.id === item.tempId ? ct : t; }); }
         else if (item.table === "journal") { var cj = coerceJournal(res.data); state.journal = state.journal.map(function (jj) { return jj.id === item.tempId ? cj : jj; }); }
-      } catch (e) { remaining.push(item); }
+        // Drop this item from the durable queue as soon as it's confirmed synced,
+        // not just once at the end of the loop — otherwise a tab closed mid-flush
+        // still has every already-synced item sitting in the queue and re-inserts
+        // it (duplicate trade/journal entry) on the next flush.
+        setOutbox(getOutbox().filter(function (it) { return !(it.table === item.table && it.tempId === item.tempId); }));
+        saveCache();
+      } catch (e) { /* left in the queue, retried on next flush */ }
     }
-    setOutbox(remaining);
-    saveCache();
   }
   function hydrateFromCache() {
     var c = lsGet(cacheKey());
@@ -549,7 +552,7 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   }
   function exportAll() {
-    var data = { app: "Bitacora", exported_at: new Date().toISOString(), accounts: state.accounts, trades: state.trades, journal: state.journal };
+    var data = { app: "Bitacora", exported_at: new Date().toISOString(), accounts: state.accounts, trades: state.trades, journal: state.journal, settings: state.settings };
     downloadText("bitacora-backup-" + todayISO() + ".json", JSON.stringify(data, null, 2), "application/json");
   }
   function exportTax(rows) {
@@ -932,6 +935,12 @@
     try { var r = await SB.storage.from(SHOT_BUCKET).createSignedUrl(path, 3600); return r && r.data ? r.data.signedUrl : null; }
     catch (e) { return null; }
   }
+  // Best-effort delete of a screenshot no longer referenced by any trade
+  // (replaced or the trade itself was deleted). Never blocks the caller.
+  async function removeScreenshot(path) {
+    if (!path) return;
+    try { await SB.storage.from(SHOT_BUCKET).remove([path]); } catch (e) { }
+  }
   // An <img> whose source is resolved asynchronously via a short-lived signed URL.
   function screenshotEl(path) {
     var img = h("img", { alt: "Captura de la operación", style: "width:100%;border-radius:10px;border:1px solid #ECE7DD;display:block;cursor:zoom-in;background:#FBFAF7;min-height:48px;" });
@@ -955,7 +964,8 @@
       var pnl = netPnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) }, commission);
       // Upload a freshly attached screenshot first (online only); otherwise keep
       // whatever path the trade already had.
-      var shotPath = d.screenshot_path || null;
+      var oldShotPath = d.screenshot_path || null;
+      var shotPath = oldShotPath;
       if (d._imageFile) { var p = await uploadScreenshot(d._imageFile); if (p) shotPath = p; }
       var row = { date: d.date, time: d.time || null, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, commission: commission, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
       if (state.editId) {
@@ -964,6 +974,9 @@
         if (up.error) { window.alert("No se pudo actualizar la operación: " + up.error.message); return; }
         var updated = coerceTrade(up.data);
         state.trades = state.trades.map(function (t) { return t.id === updated.id ? updated : t; });
+        // Replaced with a freshly uploaded image: the old file is no longer
+        // referenced by anything, so reclaim the storage.
+        if (oldShotPath && shotPath !== oldShotPath) removeScreenshot(oldShotPath);
       } else if (!isOnline()) {
         // Offline: optimistic insert + queue for sync when back online.
         var tempId = "tmp_" + Date.now();
@@ -1004,8 +1017,10 @@
       state.selectedId = null; saveCache(); render(); return;
     }
     if (!isOnline()) { window.alert("Necesitas conexión para eliminar una operación."); return; }
+    var deleted = state.trades.find(function (t) { return t.id === id; });
     var res = await SB.from("trades").delete().eq("id", id);
     if (res.error) { window.alert("No se pudo eliminar: " + res.error.message); return; }
+    if (deleted && deleted.screenshot_path) removeScreenshot(deleted.screenshot_path);
     state.trades = state.trades.filter(function (t) { return t.id !== id; });
     state.selectedId = null;
     saveCache();
