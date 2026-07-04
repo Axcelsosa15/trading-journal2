@@ -169,6 +169,7 @@
     corrFactor: "rating", corrResult: "expectancy",
     tradesShown: 150,
     showImport: false, import: null, importResult: 0,
+    showRestore: false, restore: null,
     mfaGate: false, mfaChecked: false, mfa: { code: "", busy: false, error: "" },
     showMfa: false, mfaFactors: [], mfaFactorsLoaded: false,
     mfaEnroll: { id: null, qr: "", secret: "", code: "", busy: false, error: "" },
@@ -891,6 +892,88 @@
     };
     reader.onerror = function () { state.import = Object.assign(state.import || {}, { error: "No se pudo leer el archivo.", rows: [], headers: [] }); renderModal(); };
     reader.readAsText(file);
+  }
+
+  // ---------- restore from JSON backup (counterpart to exportAll) ----------
+  function openRestore() { state.showRestore = true; state.restore = { data: null, fileName: "", error: "", busy: false }; renderModal(); }
+  function closeRestore() { state.showRestore = false; state.restore = null; renderModal(); }
+  function handleRestoreFile(file) {
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var data = JSON.parse(reader.result);
+        var looksValid = data && typeof data === "object" &&
+          (Array.isArray(data.trades) || Array.isArray(data.accounts) || Array.isArray(data.journal) || data.settings);
+        if (!looksValid) state.restore = Object.assign(state.restore || {}, { error: "El archivo no parece un backup de Bitácora (falta trades/accounts/journal/settings).", data: null });
+        else state.restore = { data: data, fileName: file.name, error: "", busy: false };
+      } catch (e) { state.restore = Object.assign(state.restore || {}, { error: "No se pudo leer el archivo (JSON inválido).", data: null }); }
+      renderModal();
+    };
+    reader.onerror = function () { state.restore = Object.assign(state.restore || {}, { error: "No se pudo leer el archivo.", data: null }); renderModal(); };
+    reader.readAsText(file);
+  }
+  // Counts for the confirmation summary: how many rows of each kind, and how
+  // many are genuinely new vs. rows that already exist locally (those will be
+  // updated in place by the upsert below, not duplicated).
+  function restorePreview() {
+    var data = (state.restore || {}).data;
+    if (!data) return null;
+    var accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    var trades = Array.isArray(data.trades) ? data.trades : [];
+    var journal = Array.isArray(data.journal) ? data.journal : [];
+    var existingT = {}; state.trades.forEach(function (t) { existingT[t.id] = true; });
+    var existingA = {}; state.accounts.forEach(function (a) { existingA[a.id] = true; });
+    var existingJ = {}; state.journal.forEach(function (j) { existingJ[j.id] = true; });
+    return {
+      accounts: accounts.length, trades: trades.length, journal: journal.length,
+      newAccounts: accounts.filter(function (a) { return a && a.id && !existingA[a.id]; }).length,
+      newTrades: trades.filter(function (t) { return t && t.id && !existingT[t.id]; }).length,
+      newJournal: journal.filter(function (j) { return j && j.id && !existingJ[j.id]; }).length,
+      hasSettings: !!data.settings,
+    };
+  }
+  // Restore is an upsert keyed by id (not a blind insert): rows already present
+  // locally are updated in place instead of duplicated, matching the same
+  // dedupe intent as the CSV importer's duplicate detection.
+  async function runRestore() {
+    var data = (state.restore || {}).data;
+    if (!data) return;
+    if (!isOnline()) { window.alert("Necesitas conexión para restaurar un backup."); return; }
+    state.restore.busy = true; renderModal();
+    try {
+      var accounts = (Array.isArray(data.accounts) ? data.accounts : []).filter(function (a) { return a && a.id; });
+      var trades = (Array.isArray(data.trades) ? data.trades : []).filter(function (t) { return t && t.id; });
+      var journal = (Array.isArray(data.journal) ? data.journal : []).filter(function (j) { return j && j.id; });
+      // Accounts before trades: trades.account_id is a foreign key into accounts.
+      if (accounts.length) {
+        var accRows = accounts.map(function (a) {
+          return { id: a.id, name: a.name, kind: a.kind, firm: a.firm || null, balance: Number(a.balance) || 0, currency: a.currency || "USD", phase: a.phase || null, status: a.status || "activa", profit_target: a.profit_target === "" || a.profit_target == null ? null : Number(a.profit_target), max_drawdown: a.max_drawdown === "" || a.max_drawdown == null ? null : Number(a.max_drawdown), notes: a.notes || "" };
+        });
+        var ar = await SB.from("accounts").upsert(accRows, { onConflict: "id" }).select();
+        if (ar.error) throw ar.error;
+      }
+      if (trades.length) {
+        var tRows = trades.map(function (t) {
+          return { id: t.id, date: t.date, time: t.time || null, symbol: t.symbol, type: t.type, side: t.side, contracts: Number(t.contracts), entry: Number(t.entry), exit: Number(t.exit), setup: t.setup, emotion: t.emotion, rating: Number(t.rating) || 3, note: t.note || "", pnl: Number(t.pnl) || 0, commission: t.commission == null ? 0 : Number(t.commission), account_id: t.account_id || null, tags: Array.isArray(t.tags) ? t.tags : [], mae: t.mae === "" || t.mae == null ? null : Number(t.mae), mfe: t.mfe === "" || t.mfe == null ? null : Number(t.mfe), screenshot_path: t.screenshot_path || null };
+        });
+        var tr = await SB.from("trades").upsert(tRows, { onConflict: "id" }).select();
+        if (tr.error) throw tr.error;
+      }
+      if (journal.length) {
+        var jRows = journal.map(function (j) { return { id: j.id, date: j.date, mood: j.mood || "Enfocado", title: j.title, body: j.body || "", lesson: j.lesson || "" }; });
+        var jr = await SB.from("journal").upsert(jRows, { onConflict: "id" }).select();
+        if (jr.error) throw jr.error;
+      }
+      if (data.settings) { applySettings(data.settings); await saveSettings(); }
+      state.showRestore = false; state.restore = null;
+      await loadData();
+      window.alert("Backup restaurado correctamente.");
+    } catch (e) {
+      state.restore.busy = false;
+      state.restore.error = "No se pudo restaurar: " + (e && e.message ? e.message : "error desconocido");
+      renderModal();
+    }
   }
 
   // ---------- trade screenshots (private Supabase Storage) ----------
@@ -2109,6 +2192,8 @@
             icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>'), "CSV"),
           h("button", { title: "Exportar CSV para impuestos (año + P&L)", onClick: function () { exportTax(ft); }, style: exportBtnStyle(), hoverBg: "#FAF8F4" }, "Tax"),
           h("button", { title: "Copia de seguridad de todos tus datos (JSON)", onClick: exportAll, style: exportBtnStyle(), hoverBg: "#FAF8F4" }, "Backup"),
+          h("button", { title: "Restaurar todos tus datos desde un backup JSON", onClick: openRestore, style: exportBtnStyle(), hoverBg: "#FAF8F4" },
+            icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 12a9 9 0 1 0 2.6-6.3"/><polyline points="3 4 3 9 8 9"/></svg>'), "Restaurar"),
           h("button", { title: "Importar operaciones desde un CSV", onClick: openImport, style: exportBtnStyle(), hoverBg: "#FAF8F4" },
             icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>'), "Importar"))),
       advBar,
@@ -2877,6 +2962,7 @@
     root.innerHTML = "";
     if (!state.user) return;
     if (state.showImport) root.appendChild(importModal());
+    else if (state.showRestore) root.appendChild(restoreModal());
     else if (state.showAdd) root.appendChild(addModal());
     else if (state.showJournalAdd) root.appendChild(journalModal());
     else if (state.showAccountAdd) root.appendChild(accountModal());
@@ -2998,6 +3084,35 @@
     return el;
   }
 
+  function restoreModal() {
+    var rs = state.restore || {};
+    var prev = rs.data ? restorePreview() : null;
+    var fileInput = h("input", { type: "file", accept: ".json,application/json", style: "display:none;", onChange: function (e) { handleRestoreFile(e.target.files && e.target.files[0]); } });
+    var picker = h("label", { style: "display:flex;align-items:center;justify-content:center;gap:10px;border:1.5px dashed #D8D2C6;border-radius:12px;padding:18px;cursor:pointer;color:#54514A;font-size:13.5px;font-weight:500;background:#FBFAF7;", hoverBg: "#F5F1E8" },
+      icon('<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>'),
+      h("span", null, rs.data ? ("Archivo: " + rs.fileName + " · elegir otro") : "Selecciona un archivo de backup (.json)"), fileInput);
+    var body = [
+      h("div", { style: "font-size:13px;color:#807B72;line-height:1.5;" }, "Restaura cuentas, operaciones, diario y ajustes desde un archivo exportado con el botón «Backup». Las filas que ya existan (mismo id) se actualizan en su lugar — nada se duplica."),
+      picker,
+    ];
+    if (rs.error) body.push(h("div", { style: "background:#FCF1EF;border:1px solid #F2D9D5;color:#B23A2E;border-radius:9px;padding:10px 12px;font-size:12.5px;" }, rs.error));
+    if (prev) {
+      body.push(h("div", { style: "background:#FBFAF7;border:1px solid #ECE7DD;border-radius:10px;padding:12px 14px;font-size:13px;display:flex;flex-direction:column;gap:4px;" },
+        h("div", null, prev.accounts + " cuenta(s) en el backup (" + prev.newAccounts + " nueva(s))"),
+        h("div", null, prev.trades + " operación(es) en el backup (" + prev.newTrades + " nueva(s))"),
+        h("div", null, prev.journal + " entrada(s) de diario en el backup (" + prev.newJournal + " nueva(s))"),
+        prev.hasSettings ? h("div", null, "Incluye ajustes (reglas de riesgo + checklist) — se sobrescribirán los actuales") : null));
+    }
+    var hasAnything = prev && (prev.accounts || prev.trades || prev.journal || prev.hasSettings);
+    var canRestore = !rs.busy && hasAnything;
+    var restoreBtn = h("button", { style: "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (canRestore ? "background:#16181C;color:#fff;" : "background:#CFC9BD;color:#fff;cursor:not-allowed;"), onClick: function () { if (canRestore) runRestore(); } },
+      rs.busy ? "Restaurando…" : "Restaurar backup");
+    var footer = [
+      h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #E2DDD3;background:#fff;font-weight:600;font-size:13.5px;", hoverBg: "#FAF8F4", onClick: closeRestore }, "Cancelar"),
+      restoreBtn,
+    ];
+    return modalFrame("Restaurar backup (JSON)", closeRestore, body, footer, 600);
+  }
   function importModal() {
     var im = state.import || {};
     var loaded = im.rows && im.rows.length;
