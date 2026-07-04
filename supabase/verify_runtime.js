@@ -149,6 +149,7 @@ async function upsertSettings(jwt) {
     rating: 5,
     note: "temporary verifier row",
     pnl: 200,
+    fees: 0,
     account_id: account.id,
     tags: ["runtime-verifier"],
     mae: null,

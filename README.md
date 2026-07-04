@@ -17,8 +17,8 @@ online; everything else works offline).
   session and hour.
 - **Estadísticas** — advanced metrics: expectancy ($ and R), SQN, Sharpe,
   Sortino, Kelly, profit factor, payoff, drawdown + duration, recovery factor,
-  streaks, percentiles, MAE/MFE edge ratio, plus a P&L distribution histogram
-  and an underwater drawdown curve.
+  streaks, percentiles, MAE/MFE edge ratio, gross P&L vs. total commissions/fees,
+  plus a P&L distribution histogram and an underwater drawdown curve.
 - **Correlaciones** — Pearson correlation of numeric factors (rating, size,
   hour, MAE/MFE) with P&L, best/worst category per factor, and an explorer
   (scatter + trend line, or ranked bars by chosen result measure).
@@ -64,6 +64,9 @@ offline viewing.
   a private per-user Supabase Storage bucket and shown via a short-lived signed URL.
 - CSV import: in **Operaciones → Importar**, map your broker/prop-firm CSV
   columns (auto-detected) and bulk-import trades; P&L is computed when absent.
+- Commissions/fees: an optional per-trade field (form, CSV import/export, and
+  tax export) so **P&L neto** is always gross P&L minus what you paid in
+  fees — **Estadísticas** shows the gross P&L and total commissions separately.
 - `tests/` — headless jsdom smoke tests; `tests/run.js` is the runner.
 - `SECURITY.md` — security assessment and remediation guide.
 
@@ -83,7 +86,7 @@ headless smoke tests that boot the app with a mocked Supabase client.
 ```sh
 npm install          # installs jsdom
 npm run check        # node --check on app.js / sw.js
-npm test             # runs tests/*.test.js (8 suites)
+npm test             # runs tests/*.test.js (30 suites)
 ```
 
 CI (`.github/workflows/ci.yml`) runs these on every PR and push to `main`.

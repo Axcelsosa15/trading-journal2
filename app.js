@@ -201,12 +201,13 @@
     var P = { ES: 50, MES: 5, NQ: 20, MNQ: 2, CL: 1000, GC: 100, MGC: 10, RTY: 50, MRTY: 5 };
     return t.type === "option" ? 100 : (P[(t.symbol || "").toUpperCase()] || 1);
   }
+  // Gross P&L from price movement alone (before commissions/fees).
   function pnlOf(t) {
     var dir = t.side === "long" ? 1 : -1;
     return Math.round((Number(t.exit) - Number(t.entry)) * PV(t) * Number(t.contracts) * dir);
   }
   function blankDraft() {
-    return { symbol: "MES", type: "future", side: "long", contracts: 1, entry: "", exit: "", date: todayISO(), time: "", setup: "Ruptura", emotion: "Tranquilo", rating: 3, note: "", account_id: "", tags: "", mae: "", mfe: "", screenshot_path: "", _imageFile: null };
+    return { symbol: "MES", type: "future", side: "long", contracts: 1, entry: "", exit: "", date: todayISO(), time: "", setup: "Ruptura", emotion: "Tranquilo", rating: 3, note: "", account_id: "", tags: "", mae: "", mfe: "", fees: "", screenshot_path: "", _imageFile: null };
   }
   function blankAccountDraft() {
     return { name: "", kind: "fondeo", firm: "", balance: "", currency: "USD", phase: "", status: "activa", profit_target: "", max_drawdown: "", notes: "" };
@@ -217,7 +218,7 @@
 
   // ---------- data access (Supabase) ----------
   function coerceTrade(r) {
-    return { id: r.id, date: r.date, time: r.time || "", symbol: r.symbol, type: r.type, side: r.side, contracts: Number(r.contracts), entry: Number(r.entry), exit: Number(r.exit), setup: r.setup, emotion: r.emotion, rating: Number(r.rating), note: r.note || "", pnl: Number(r.pnl), account_id: r.account_id || null, tags: Array.isArray(r.tags) ? r.tags : [], mae: r.mae == null ? "" : Number(r.mae), mfe: r.mfe == null ? "" : Number(r.mfe), screenshot_path: r.screenshot_path || null };
+    return { id: r.id, date: r.date, time: r.time || "", symbol: r.symbol, type: r.type, side: r.side, contracts: Number(r.contracts), entry: Number(r.entry), exit: Number(r.exit), setup: r.setup, emotion: r.emotion, rating: Number(r.rating), note: r.note || "", pnl: Number(r.pnl), fees: r.fees == null ? 0 : Number(r.fees), account_id: r.account_id || null, tags: Array.isArray(r.tags) ? r.tags : [], mae: r.mae == null ? "" : Number(r.mae), mfe: r.mfe == null ? "" : Number(r.mfe), screenshot_path: r.screenshot_path || null };
   }
   function parseTags(str) {
     if (Array.isArray(str)) return str;
@@ -500,10 +501,10 @@
   }
   function exportCSV(rows) {
     if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
-    var headers = ["Fecha", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "Setup", "Emoción", "Valoración", "Cuenta", "PnL", "Notas"];
+    var headers = ["Fecha", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "Setup", "Emoción", "Valoración", "Cuenta", "Comisiones", "PnL", "Notas"];
     var lines = [headers.map(csvCell).join(",")];
     rows.forEach(function (t) {
-      lines.push([t.date, t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl, t.note].map(csvCell).join(","));
+      lines.push([t.date, t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.fees || 0, t.pnl, t.note].map(csvCell).join(","));
     });
     var csv = "﻿" + lines.join("\r\n"); // BOM so Excel reads accents correctly
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -528,10 +529,10 @@
   function exportTax(rows) {
     if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
     var sorted = rows.slice().sort(function (a, b) { return a.date < b.date ? -1 : 1; });
-    var headers = ["Año", "Fecha", "Cuenta", "Símbolo", "Instrumento", "Dirección", "Contratos", "PnL"];
+    var headers = ["Año", "Fecha", "Cuenta", "Símbolo", "Instrumento", "Dirección", "Contratos", "Comisiones", "PnL"];
     var lines = [headers.map(csvCell).join(",")];
     sorted.forEach(function (t) {
-      lines.push([t.date.slice(0, 4), t.date, accountName(t.account_id) || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.pnl].map(csvCell).join(","));
+      lines.push([t.date.slice(0, 4), t.date, accountName(t.account_id) || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.fees || 0, t.pnl].map(csvCell).join(","));
     });
     downloadText("bitacora-impuestos-" + todayISO() + ".csv", "﻿" + lines.join("\r\n"), "text/csv");
   }
@@ -564,7 +565,7 @@
         trades.push({
           date: day, time: pad(hour) + ":" + pad(min), symbol: sym[0], type: "future", side: side,
           contracts: contracts, entry: entry, exit: exit, setup: pick(SETUPS), emotion: pick(["Tranquilo", "Confiado", "Ansioso", "FOMO"]),
-          rating: 1 + Math.floor(rnd() * 5), note: win ? pick(notesWin) : pick(notesLoss), pnl: pnl,
+          rating: 1 + Math.floor(rnd() * 5), note: win ? pick(notesWin) : pick(notesLoss), pnl: pnl, fees: 0,
           tags: tags.filter(function (x, i, a) { return a.indexOf(x) === i; }),
           mae: Math.round(rnd() * 8 * pv * contracts), mfe: Math.round(rnd() * 12 * pv * contracts), screenshot_path: null
         });
@@ -691,6 +692,7 @@
     { k: "entry", label: "Entrada", req: true, kw: /entrada|entry|apertura|open/i },
     { k: "exit", label: "Salida", req: true, kw: /salida|exit|cierre|close/i },
     { k: "pnl", label: "P&L", kw: /pnl|p&l|p\/l|profit|gananc|resultado|net/i },
+    { k: "fees", label: "Comisiones", kw: /comisi[óo]n|fee|commission|swap/i },
     { k: "setup", label: "Setup", kw: /setup|estrategia|strategy/i },
     { k: "emotion", label: "Emoción", kw: /emoci|emotion|mood/i },
     { k: "rating", label: "Valoración", kw: /valora|rating|score|estrella/i },
@@ -752,8 +754,12 @@
     var type = map.type >= 0 ? importType(get("type")) : "future";
     var ratingRaw = map.rating >= 0 ? Math.round(importNum(get("rating"))) : 3;
     var rating = ratingRaw >= 1 && ratingRaw <= 5 ? ratingRaw : 3;
+    var feesNum = map.fees >= 0 ? importNum(get("fees")) : NaN;
+    var fees = !isNaN(feesNum) ? Math.abs(feesNum) : 0;
+    // A supplied P&L column is trusted as-is (the broker already netted fees in);
+    // otherwise derive it from price movement and subtract the imported fees.
     var pnl = map.pnl >= 0 && !isNaN(importNum(get("pnl"))) ? Math.round(importNum(get("pnl")))
-      : pnlOf({ symbol: symbol, type: type, side: side, contracts: contracts, entry: entry, exit: exit });
+      : pnlOf({ symbol: symbol, type: type, side: side, contracts: contracts, entry: entry, exit: exit }) - fees;
     var acctId = null;
     if (map.account >= 0) {
       var an = String(get("account") || "").trim().toLowerCase();
@@ -768,7 +774,7 @@
         setup: (map.setup >= 0 && String(get("setup")).trim()) || "Ruptura",
         emotion: (map.emotion >= 0 && String(get("emotion")).trim()) || "Tranquilo",
         rating: rating, note: map.note >= 0 ? String(get("note") || "") : "",
-        pnl: pnl, account_id: acctId, tags: [], mae: null, mfe: null,
+        pnl: pnl, fees: fees, account_id: acctId, tags: [], mae: null, mfe: null,
       },
     };
   }
@@ -899,12 +905,14 @@
   async function saveTrade() {
     var d = state.draft;
     if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
-    var pnl = pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
+    var fees = d.fees === "" || d.fees == null || isNaN(Number(d.fees)) ? 0 : Math.abs(Number(d.fees));
+    // Net P&L = gross move (price × point value × size) minus commissions/fees.
+    var pnl = pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) }) - fees;
     // Upload a freshly attached screenshot first (online only); otherwise keep
     // whatever path the trade already had.
     var shotPath = d.screenshot_path || null;
     if (d._imageFile) { var p = await uploadScreenshot(d._imageFile); if (p) shotPath = p; }
-    var row = { date: d.date, time: d.time || null, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
+    var row = { date: d.date, time: d.time || null, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, fees: fees, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
     if (state.editId) {
       if (!isOnline()) { window.alert("Necesitas conexión para editar una operación. Las operaciones nuevas sí se guardan sin conexión."); return; }
       var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
@@ -933,7 +941,7 @@
   }
   function openEdit(t) {
     state.editId = t.id;
-    state.draft = { symbol: t.symbol, type: t.type, side: t.side, contracts: t.contracts, entry: t.entry, exit: t.exit, date: t.date, time: t.time || "", setup: t.setup, emotion: t.emotion, rating: t.rating, note: t.note, account_id: t.account_id || "", tags: (t.tags || []).join(", "), mae: t.mae, mfe: t.mfe, screenshot_path: t.screenshot_path || "", _imageFile: null };
+    state.draft = { symbol: t.symbol, type: t.type, side: t.side, contracts: t.contracts, entry: t.entry, exit: t.exit, date: t.date, time: t.time || "", setup: t.setup, emotion: t.emotion, rating: t.rating, note: t.note, account_id: t.account_id || "", tags: (t.tags || []).join(", "), mae: t.mae, mfe: t.mfe, fees: t.fees || "", screenshot_path: t.screenshot_path || "", _imageFile: null };
     state.selectedId = null;
     state.showAdd = true;
     render();
@@ -1151,7 +1159,8 @@
     var gp = wins.reduce(function (a, t) { return a + t.pnl; }, 0);
     var gl = Math.abs(losses.reduce(function (a, t) { return a + t.pnl; }, 0));
     var net = gp - gl, wr = n ? wins.length / n : 0;
-    return { n: n, net: net, wr: wr, wins: wins.length, losses: losses.length, pf: gl ? gp / gl : (gp > 0 ? Infinity : 0), exp: n ? net / n : 0, gp: gp, gl: gl };
+    var fees = ts.reduce(function (a, t) { return a + (Number(t.fees) || 0); }, 0);
+    return { n: n, net: net, wr: wr, wins: wins.length, losses: losses.length, pf: gl ? gp / gl : (gp > 0 ? Infinity : 0), exp: n ? net / n : 0, gp: gp, gl: gl, fees: fees, grossPnl: net + fees };
   }
   function group(keyFn) {
     var m = {};
@@ -1225,8 +1234,12 @@
     var byDay = {}; rows.forEach(function (t) { byDay[t.date] = (byDay[t.date] || 0) + t.pnl; });
     var dayVals = Object.keys(byDay).map(function (k) { return byDay[k]; });
     var greenDays = dayVals.filter(function (x) { return x > 0; }).length;
+    // t.pnl is already net of fees; gross P&L is net + fees paid.
+    var fees = rows.reduce(function (a, t) { return a + (Number(t.fees) || 0); }, 0);
+    var grossPnl = net + fees;
     return {
       n: n, wins: wins.length, losses: losses.length, be: be, net: net, gp: gp, gl: gl, wr: wr,
+      fees: fees, grossPnl: grossPnl,
       avgWin: avgWin, avgLoss: avgLoss, payoff: payoff, pf: pf, expectancy: expectancy,
       rUnit: rUnit, rMul: rMul, expR: expR, sdR: sdR, sqn: sqn, sd: sd, sharpe: sharpe, sortino: sortino, kelly: kelly,
       maxWinStreak: maxW, maxLossStreak: maxL, curStreak: cur, maxDD: maxDD, maxDDDur: maxDur, recovery: recovery,
@@ -1791,7 +1804,7 @@
     return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:18px;" },
       onb,
       h("div", { style: "display:grid;grid-template-columns:repeat(4,1fr);gap:14px;" },
-        kpiCard("P&L neto", pnlColor(m.net), signed(m.net), null, m.n + " operaciones cerradas"),
+        kpiCard("P&L neto", pnlColor(m.net), signed(m.net), null, m.n + " operaciones cerradas" + (m.fees ? " · " + money(m.fees) + " en comisiones" : "")),
         kpiCard("Win rate", "", Math.round(m.wr * 100) + "%", winBar, m.wins + " ganadoras · " + m.losses + " perdedoras"),
         kpiCard("Profit factor", "", ratioStr(m.pf), null, money(m.gp) + " / " + money(m.gl)),
         kpiCard("Esperanza / op.", pnlColor(m.exp), signed(m.exp), null, "media por operación")),
@@ -2288,6 +2301,8 @@
         statCard("Pérdida media", signed(x.avgLoss), "color:#D6483B;", x.losses + " perdedoras"),
         statCard("Ratio de pago", ratioStr(x.payoff), "", "Ganancia media ÷ pérdida media (payoff)."),
         statCard("Win rate", Math.round(x.wr * 100) + "%", "", x.wins + "G · " + x.losses + "P · " + x.be + " BE"),
+        statCard("P&L bruto", signed(x.grossPnl), pnlColor(x.grossPnl), "Antes de comisiones/fees."),
+        statCard("Comisiones", money(x.fees), "", "Total pagado en comisiones/fees. P&L neto = bruto − comisiones."),
       ]),
       statSection("Calidad del sistema y riesgo ajustado", "1R = pérdida media (" + money(x.rUnit) + ") al no haber stop registrado", [
         statCard("SQN", ratioStr(x.sqn), x.sqn >= 2 ? "color:#16915B;" : (x.sqn < 1 ? "color:#D6483B;" : ""), "System Quality Number (Van Tharp). >2 bueno, >3 excelente."),
@@ -2838,10 +2853,15 @@
   function draftPnl() {
     var d = state.draft;
     var valid = d.entry !== "" && d.exit !== "";
-    var pnl = valid ? pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts) || 0, entry: Number(d.entry), exit: Number(d.exit) }) : 0;
+    var fees = d.fees === "" || d.fees == null || isNaN(Number(d.fees)) ? 0 : Math.abs(Number(d.fees));
+    var pnl = valid ? pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts) || 0, entry: Number(d.entry), exit: Number(d.exit) }) - fees : 0;
     return { valid: valid, pnl: pnl };
   }
-  function isSaveValid() { var d = state.draft; return d.symbol && d.entry !== "" && d.exit !== "" && Number(d.contracts) > 0; }
+  function isSaveValid() {
+    var d = state.draft;
+    if (!(d.symbol && d.entry !== "" && d.exit !== "" && Number(d.contracts) > 0)) return false;
+    return d.fees === "" || d.fees == null || (!isNaN(Number(d.fees)) && Number(d.fees) >= 0);
+  }
 
   function modalFrame(title, onClose, bodyChildren, footerChildren, width) {
     var modal = h("div", { class: "dc-modal", style: "position:relative;width:" + (width || 540) + "px;max-width:100%;max-height:92vh;overflow-y:auto;background:#fff;border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,.22);" },
@@ -2940,7 +2960,9 @@
         field("Setup", fieldSelect(d, "setup", SETUPS.map(function (x) { return [x, x]; }))),
         field("Emoción", fieldSelect(d, "emotion", [["Tranquilo", "Tranquilo"], ["Confiado", "Confiado"], ["Ansioso", "Ansioso"], ["FOMO", "FOMO"]])),
         field("Valoración", fieldSelect(d, "rating", [["1", "★"], ["2", "★★"], ["3", "★★★"], ["4", "★★★★"], ["5", "★★★★★"]]))),
-      field("Cuenta", fieldSelect(d, "account_id", [["", "Sin cuenta"]].concat(state.accounts.map(function (a) { return [a.id, a.name + " · " + (KIND_LABEL[a.kind] || a.kind)]; })))),
+      h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
+        field("Cuenta", fieldSelect(d, "account_id", [["", "Sin cuenta"]].concat(state.accounts.map(function (a) { return [a.id, a.name + " · " + (KIND_LABEL[a.kind] || a.kind)]; })))),
+        field("Comisiones (opcional)", fieldInput(d, "fees", { type: "number", step: "0.01", min: "0", placeholder: "0.00", style: inMono, onInput: function (e) { d.fees = e.target.value; refresh(); } }))),
       field("Etiquetas (separadas por comas)", fieldInput(d, "tags", { placeholder: "NY open, breakout, BTC, 5m…", style: "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;" })),
       h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
         field("MAE (excursión adversa)", fieldInput(d, "mae", { type: "number", step: "0.01", placeholder: "opcional", style: inMono })),
