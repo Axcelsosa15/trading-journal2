@@ -212,7 +212,10 @@
 
   // Standard CME/CBOT/NYMEX/COMEX point values (USD per 1.00 move in the quoted price).
   var FUTURES_PV = {
-    ES: 50, MES: 5, NQ: 20, MNQ: 2, YM: 5, MYM: 0.5, RTY: 50, MRTY: 5,
+    // M2K is the real CME ticker for the Micro E-mini Russell 2000; MRTY is
+    // kept alongside it so any trade already logged under that symbol still
+    // resolves (additive, nothing removed).
+    ES: 50, MES: 5, NQ: 20, MNQ: 2, YM: 5, MYM: 0.5, RTY: 50, M2K: 5, MRTY: 5,
     CL: 1000, MCL: 100, QM: 500, NG: 10000, RB: 42000, HO: 42000,
     GC: 100, MGC: 10, SI: 5000, SIL: 1000, HG: 25000, PL: 50, PA: 100,
     ZB: 1000, ZN: 1000, ZF: 1000, ZT: 2000, UB: 1000,
