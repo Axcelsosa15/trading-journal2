@@ -27,7 +27,6 @@
   };
 
   document.documentElement.setAttribute("data-rp-build", VERSION);
-  document.body.classList.add("rp-ready");
 
   function textOf(el) { return (el && el.textContent || "").trim(); }
   function escapeHtml(s) {
@@ -108,10 +107,32 @@
         if (value && Array.isArray(value.trades) && (!best || (value.ts || 0) > (best.ts || 0))) best = value;
       } catch (e) { }
     }
-    return best || { trades: [] };
+    return best || { trades: [], accounts: [] };
+  }
+  // Global account scope — the app writes it so every research surface stays in
+  // sync with whichever account you're looking at ("all" when unscoped).
+  function scopeAccountId() {
+    try {
+      if (window.__bitacoraScopeAccount) return window.__bitacoraScopeAccount;
+      var v = localStorage.getItem("bitacora_scope_account");
+      return v || "all";
+    } catch (e) { return "all"; }
+  }
+  function accountName(cache, id) {
+    if (id === "all") return "Todas las cuentas";
+    if (id === "none") return "Sin cuenta";
+    var accts = (cache && cache.accounts) || [];
+    var a = accts.filter(function (x) { return x.id === id; })[0];
+    return a ? a.name : "Cuenta";
+  }
+  function scopeTrades(trades) {
+    var id = scopeAccountId();
+    if (id === "all") return trades;
+    return trades.filter(function (t) { return (t.account_id || "none") === id; });
   }
   function summarize() {
-    var trades = latestCache().trades || [];
+    var cache = latestCache();
+    var trades = scopeTrades(cache.trades || []);
     var closed = trades.filter(function (t) { return isFinite(Number(t.pnl)); });
     var research = closed.filter(hasResearch);
     var knownSame = closed.filter(function (t) { return !!researchFromTags(t.tags).sameBar; });
@@ -134,6 +155,9 @@
     });
     return {
       trades: closed,
+      scopeId: scopeAccountId(),
+      scopeLabel: accountName(cache, scopeAccountId()),
+      accountCount: ((cache && cache.accounts) || []).length,
       coverage: closed.length ? research.length / closed.length : null,
       conflicts: conflicts.length,
       sameKnown: knownSame.length,
@@ -178,8 +202,10 @@
   function researchPanelHtml() {
     var s = summarize();
     var aVsB = s.aEdge == null || s.bEdge == null ? null : s.bEdge - s.aEdge;
-    return '<section class="rp-research-panel" data-rp-panel="research">' +
-      '<div class="rp-panel-head"><div><div class="rp-panel-title">Research quality</div><div class="rp-panel-copy">Convierte el research semanal en evidencia: same-bar conflicts, A/B de EMA/VWAP, filtros macro/IV, MAE/MFE y contexto de liquidez.</div></div><button class="rp-export-btn" type="button" data-rp-export>Export research CSV</button></div>' +
+    var cov = s.coverage == null ? 0 : Math.round(s.coverage * 100);
+    var acctTag = s.accountCount ? '<div class="rp-account-tag">' + escapeHtml(s.scopeLabel) + '</div>' : '';
+    return '<section class="rp-research-panel" data-rp-panel="research" style="--rp-cov:' + cov + '%">' +
+      '<div class="rp-panel-head"><div><div class="rp-panel-title">Research quality</div><div class="rp-panel-copy">Convierte el research semanal en evidencia: same-bar conflicts, A/B de EMA/VWAP, filtros macro/IV, MAE/MFE y contexto de liquidez.</div>' + acctTag + '</div><button class="rp-export-btn" type="button" data-rp-export>Export research CSV</button></div>' +
       '<div class="rp-kpi-grid">' +
       '<div class="rp-kpi"><div class="rp-kpi-label">Same-bar conflict</div><div class="rp-kpi-value" style="color:' + (s.conflictRate != null && s.conflictRate > .1 ? 'var(--rp-red)' : 'var(--rp-green)') + '">' + (s.conflictRate == null ? '-' : pct(s.conflictRate)) + '</div><div class="rp-kpi-note">' + s.conflicts + '/' + s.sameKnown + ' operaciones clasificadas</div></div>' +
       '<div class="rp-kpi"><div class="rp-kpi-label">Cobertura research</div><div class="rp-kpi-value" style="color:var(--rp-green)">' + (s.coverage == null ? '-' : pct(s.coverage)) + '</div><div class="rp-kpi-note">' + s.trades.filter(hasResearch).length + ' con protocolo</div></div>' +
@@ -190,24 +216,81 @@
       '<div class="rp-chip-row"><span class="rp-chip">MAE avg: ' + (s.avgMae == null ? '-' : money(s.avgMae)) + '</span><span class="rp-chip">MFE avg: ' + (s.avgMfe == null ? '-' : money(s.avgMfe)) + '</span><span class="rp-chip">Build ' + VERSION + '</span></div>' +
       '</section>';
   }
+  var lastPanelHtml = "";
   function mountResearchPanel() {
     var main = document.querySelector("main");
     if (!main || !/Resumen/.test(textOf(main))) return;
+    var html = researchPanelHtml();
     var existing = main.querySelector('[data-rp-panel="research"]');
     if (existing) {
-      existing.outerHTML = researchPanelHtml();
+      // Only rewrite when the content actually changed — otherwise the app's
+      // frequent re-renders would make the panel flicker on every tick.
+      if (html !== lastPanelHtml) { existing.outerHTML = html; lastPanelHtml = html; }
+      else return; // unchanged and already mounted: nothing to do (no flicker)
     } else {
       var anchor = Array.prototype.find.call(main.children, function (el) {
         return /P&L neto|Win rate|Profit factor|Esperanza/.test(textOf(el));
       });
-      if (anchor) anchor.insertAdjacentHTML("beforebegin", researchPanelHtml());
-      else main.insertAdjacentHTML("beforeend", researchPanelHtml());
+      if (anchor) anchor.insertAdjacentHTML("beforebegin", html);
+      else main.insertAdjacentHTML("beforeend", html);
+      lastPanelHtml = html;
     }
     var btn = main.querySelector("[data-rp-export]");
     if (btn && !btn.__rpBound) {
       btn.__rpBound = true;
       btn.addEventListener("click", exportResearchCsv);
     }
+  }
+  // ---- Dynamic research-quality bar: a fixed top bar whose fill tracks the
+  // page's scroll position and whose colour reflects live research coverage. ----
+  var qbar = null, qfill = null, qtip = null;
+  function ensureQualityBar() {
+    if (qbar && document.body.contains(qbar)) return;
+    qbar = document.createElement("div");
+    qbar.className = "rp-quality-bar";
+    qbar.setAttribute("aria-hidden", "true");
+    qfill = document.createElement("div");
+    qfill.className = "rp-quality-fill";
+    qbar.appendChild(qfill);
+    qtip = document.createElement("div");
+    qtip.className = "rp-quality-tip";
+    qtip.setAttribute("aria-hidden", "true");
+    document.body.appendChild(qbar);
+    document.body.appendChild(qtip);
+  }
+  function scrollTarget() {
+    var sc = document.querySelector("main .dc-scroll");
+    if (sc && sc.scrollHeight - sc.clientHeight > 8) return sc;
+    var de = document.scrollingElement || document.documentElement;
+    return de;
+  }
+  function gradeOf(cov) { return cov == null ? "mid" : (cov >= 0.6 ? "high" : cov >= 0.3 ? "mid" : "low"); }
+  function updateQualityBar() {
+    // Only relevant for logged-in data views; hide on the auth screen.
+    var main = document.querySelector("main");
+    var app = document.getElementById("app");
+    var loggedIn = !!main && !(app && /Bienvenido de nuevo|Crea tu cuenta/.test(textOf(app)));
+    ensureQualityBar();
+    if (!loggedIn) { qbar.classList.remove("rp-on"); qtip.classList.remove("rp-on"); return; }
+    var tgt = scrollTarget();
+    var max = Math.max(1, tgt.scrollHeight - tgt.clientHeight);
+    var top = tgt === (document.scrollingElement || document.documentElement)
+      ? (window.pageYOffset || tgt.scrollTop || 0) : tgt.scrollTop;
+    var progress = Math.max(0, Math.min(100, top / max * 100));
+    qfill.style.width = progress.toFixed(1) + "%";
+    var s = summarize();
+    var grade = gradeOf(s.coverage);
+    qbar.setAttribute("data-grade", grade);
+    qtip.setAttribute("data-grade", grade);
+    var cov = s.coverage == null ? "-" : Math.round(s.coverage * 100) + "%";
+    qtip.innerHTML = '<span class="rp-quality-dot"></span>Research <b>' + cov + '</b>';
+    qbar.classList.add("rp-on");
+    qtip.classList.add("rp-on");
+  }
+  var qraf = 0;
+  function scheduleQuality() {
+    if (qraf) return;
+    qraf = window.requestAnimationFrame(function () { qraf = 0; updateQualityBar(); });
   }
   function authBadge() {
     if (document.querySelector(".rp-auth-badge")) return;
@@ -361,11 +444,16 @@
     mountResearchPanel();
     modalProtocol();
     bindModalSave();
+    updateQualityBar();
   }
   var observer = new MutationObserver(function () { window.requestAnimationFrame(tick); });
   observer.observe(document.documentElement, { childList: true, subtree: true });
   window.addEventListener("storage", tick);
   window.addEventListener("focus", tick);
+  // The quality bar must move with the page: listen for scroll on the window and
+  // (capture phase) on the app's inner scroll container, plus resize.
+  window.addEventListener("scroll", scheduleQuality, true);
+  window.addEventListener("resize", scheduleQuality);
   setInterval(tick, 2000);
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", tick);
   else tick();

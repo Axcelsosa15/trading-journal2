@@ -157,6 +157,7 @@
     savingTrade: false, savingJournal: false, savingQuickNote: false, savingAccount: false,
     selectedId: null,
     fResult: "all", fSymbol: "all", fSetup: "all", fAccount: "all", fTag: "all",
+    scopeAccount: "all",
     fDateFrom: "", fDateTo: "", fPnlMin: "", fPnlMax: "", fRating: "all",
     calMonth: thisMonth(),
     showAdd: false, editId: null, draft: blankDraft(),
@@ -336,6 +337,7 @@
       state.journal = journal.map(coerceJournal);
       state.accounts = accounts.map(coerceAccount);
       applySettings(st && st.data ? st.data.data : null);
+      restoreScopeAccount();
       state.usingCache = false;
       saveCache();
       await flushOutbox();
@@ -425,7 +427,7 @@
     applyTheme(next); render();
   }
   // Build stamp so you can always tell which version you're running.
-  var APP_VERSION = "2026.06.28";
+  var APP_VERSION = "2026.07.04";
   // Force the freshest deploy: unregister the service worker, drop every cache,
   // then hard-reload. Cures a browser stuck on an old cached build.
   async function forceUpdate() {
@@ -1232,6 +1234,9 @@
     if (res.error) { window.alert("No se pudo eliminar: " + res.error.message); return; }
     state.accounts = state.accounts.filter(function (a) { return a.id !== id; });
     state.trades = state.trades.map(function (t) { return t.account_id === id ? Object.assign({}, t, { account_id: null }) : t; });
+    // If we were scoped to the deleted account, fall back to the whole app.
+    if (state.scopeAccount === id) setScopeAccount("all");
+    if (state.fAccount === id) state.fAccount = "all";
     saveCache();
     closeAccountAdd();
     render();
@@ -1313,8 +1318,34 @@
   }
 
   // ---------- metrics & grouping ----------
+  // Global account scope: every analytical view reads through this so choosing an
+  // account in the header narrows the whole app (dashboard, stats, analytics,
+  // calendar, insights, correlations), not just the trades list.
+  function scopedTrades() {
+    if (state.scopeAccount === "all") return state.trades;
+    return state.trades.filter(function (t) { return (t.account_id || "none") === state.scopeAccount; });
+  }
+  // Re-apply a persisted scope on load, but only if that account still exists.
+  function restoreScopeAccount() {
+    var id = "all";
+    try { id = localStorage.getItem("bitacora_scope_account") || "all"; } catch (e) { }
+    var valid = id === "all" || id === "none" || state.accounts.some(function (a) { return a.id === id; });
+    state.scopeAccount = valid ? id : "all";
+    if (!valid) { try { localStorage.removeItem("bitacora_scope_account"); } catch (e) { } }
+    try { window.__bitacoraScopeAccount = state.scopeAccount; } catch (e) { }
+  }
+  function setScopeAccount(id) {
+    state.scopeAccount = id || "all";
+    try { localStorage.setItem("bitacora_scope_account", state.scopeAccount); } catch (e) { }
+    try { window.__bitacoraScopeAccount = state.scopeAccount; } catch (e) { }
+    // Keep the trades-list filter aligned so the list matches the scoped analytics.
+    if (id === "all" || id === "none") state.fAccount = id === "none" ? "none" : "all";
+    else state.fAccount = id;
+    state.tradesShown = 150;
+    render();
+  }
   function metrics() {
-    var ts = state.trades, n = ts.length;
+    var ts = scopedTrades(), n = ts.length;
     var wins = ts.filter(function (t) { return t.pnl > 0; });
     var losses = ts.filter(function (t) { return t.pnl < 0; });
     var gp = wins.reduce(function (a, t) { return a + t.pnl; }, 0);
@@ -1325,7 +1356,7 @@
   }
   function group(keyFn) {
     var m = {};
-    state.trades.forEach(function (t) {
+    scopedTrades().forEach(function (t) {
       var k = keyFn(t);
       if (!m[k]) m[k] = { key: k, pnl: 0, count: 0, wins: 0 };
       m[k].pnl += t.pnl; m[k].count++; if (t.pnl > 0) m[k].wins++;
@@ -1350,7 +1381,7 @@
   }
   // Full professional statistics for a set of trades.
   function advancedStats(rows) {
-    rows = rows || state.trades;
+    rows = rows || scopedTrades();
     var n = rows.length;
     var pnls = rows.map(function (t) { return t.pnl; });
     var wins = pnls.filter(function (x) { return x > 0; });
@@ -1434,7 +1465,7 @@
   // Monthly net P&L and a benchmark = average of completed past months.
   function monthlyBenchmark() {
     var byMonth = {};
-    state.trades.forEach(function (t) { var k = t.date.slice(0, 7); byMonth[k] = (byMonth[k] || 0) + t.pnl; });
+    scopedTrades().forEach(function (t) { var k = t.date.slice(0, 7); byMonth[k] = (byMonth[k] || 0) + t.pnl; });
     var cur = thisMonth();
     var past = Object.keys(byMonth).filter(function (k) { return k !== cur; });
     if (!past.length) return null;
@@ -1444,7 +1475,7 @@
 
   // ---------- charts (inline SVG) ----------
   function equityPts() {
-    var arr = state.trades.slice().sort(byDateAsc);
+    var arr = scopedTrades().slice().sort(byDateAsc);
     var c = 0;
     return arr.map(function (t, i) { c += t.pnl; return { i: i, v: c }; });
   }
@@ -1511,12 +1542,12 @@
   // Net P&L grouped by calendar month (last 12 with activity).
   function monthlyData() {
     var g = {};
-    state.trades.forEach(function (t) { var k = t.date.slice(0, 7); g[k] = (g[k] || 0) + t.pnl; });
+    scopedTrades().forEach(function (t) { var k = t.date.slice(0, 7); g[k] = (g[k] || 0) + t.pnl; });
     return Object.keys(g).sort().slice(-12).map(function (k) { return { label: MES[parseInt(k.slice(5, 7), 10) - 1], value: g[k] }; });
   }
   // Underwater (drawdown) curve: distance below the running equity peak.
   function drawdownEl() {
-    var chrono = state.trades.slice().sort(byDateAsc);
+    var chrono = scopedTrades().slice().sort(byDateAsc);
     if (!chrono.length) return null;
     var eq = 0, peak = 0, dd = [];
     chrono.forEach(function (t) { eq += t.pnl; if (eq > peak) peak = eq; dd.push(eq - peak); });
@@ -1804,9 +1835,22 @@
   }
 
   function header() {
+    // Global account scope: narrows the whole app to one account. Only shown once
+    // the trader has accounts to switch between.
+    var scopeSelect = null;
+    if (state.accounts.length) {
+      scopeSelect = h("select", {
+        class: "head-scope", title: "Filtrar toda la app por cuenta",
+        style: "font-size:12.5px;padding:7px 11px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;font-weight:600;color:#16181C;cursor:pointer;max-width:190px;",
+        onChange: function (ev) { setScopeAccount(ev.target.value); }
+      }, [h("option", { value: "all" }, "Todas las cuentas"), h("option", { value: "none" }, "Sin cuenta")]
+        .concat(state.accounts.map(function (a) { return h("option", { value: a.id }, a.name); })));
+      scopeSelect.value = state.scopeAccount;
+    }
     return h("header", { class: "head", style: "height:62px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 28px;border-bottom:1px solid #ECE7DD;background:rgba(250,248,244,.85);backdrop-filter:blur(8px);" },
       h("div", null, h("div", { style: "font-size:17px;font-weight:600;letter-spacing:-0.3px;" }, TITLES[state.view])),
       h("div", { style: "display:flex;align-items:center;gap:12px;" },
+        scopeSelect,
         h("div", { class: "head-date", style: "display:flex;align-items:center;gap:7px;font-size:12.5px;color:#807B72;padding:7px 12px;border:1px solid #ECE7DD;border-radius:9px;background:#fff;" },
           icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4.5" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>'),
           dateRangeLabel()),
@@ -1871,7 +1915,7 @@
         rows.push(row("Expectativa/op.", signed(st.expectancy), pnlColor(st.expectancy)));
         rows.push(row("DD realizado", "−" + money(st.maxDD), "color:#D6483B;"));
       }
-      var viewBtn = h("button", { style: "flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#16181C;color:#fff;font-weight:600;font-size:12.5px;padding:9px;border-radius:9px;border:none;cursor:pointer;", onClick: function () { state.fAccount = a.id; state.tradesShown = 150; setView("trades"); } },
+      var viewBtn = h("button", { style: "flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#16181C;color:#fff;font-weight:600;font-size:12.5px;padding:9px;border-radius:9px;border:none;cursor:pointer;", onClick: function () { setScopeAccount(a.id); setView("trades"); } },
         icon('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="18" r="1.3" fill="currentColor" stroke="none"/></svg>'), "Ver operaciones");
       var editBtn = h("button", { style: "flex:none;background:#fff;border:1px solid #E2DDD3;color:#54514A;font-weight:600;font-size:12.5px;padding:9px 14px;border-radius:9px;cursor:pointer;", hoverBg: "#FAF8F4", onClick: function () { openAccountEdit(a); } }, "Editar");
       return h("div", { style: "text-align:left;background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:4px;" },
@@ -1952,13 +1996,13 @@
     var x = advancedStats();
     var setupG = group(function (t) { return t.setup; });
     var setupData = Object.keys(setupG).map(function (k) { return { label: setupG[k].key, value: setupG[k].pnl }; });
-    var recentRows = state.trades.slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; }).slice(0, 6).map(buildRow);
+    var recentRows = scopedTrades().slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; }).slice(0, 6).map(buildRow);
     var winBar = h("div", { style: "display:flex;height:5px;border-radius:3px;overflow:hidden;margin-top:12px;background:#FBEAE7;" },
       h("div", { style: "height:100%;background:#16915B;width:" + Math.round(m.wr * 100) + "%;" }));
     var bench = monthlyBenchmark();
     // Win/loss + long/short donuts
-    var longs = state.trades.filter(function (t) { return t.side === "long"; });
-    var shorts = state.trades.filter(function (t) { return t.side === "short"; });
+    var longs = scopedTrades().filter(function (t) { return t.side === "long"; });
+    var shorts = scopedTrades().filter(function (t) { return t.side === "short"; });
     var longPnl = longs.reduce(function (a, t) { return a + t.pnl; }, 0);
     var shortPnl = shorts.reduce(function (a, t) { return a + t.pnl; }, 0);
     var wlDonut = donutCard("Ganadoras vs. perdedoras", "Tasa de acierto", donutEl(
@@ -1969,7 +2013,7 @@
        x.be ? legendRow("#D8D2C6", "Break-even", "" + x.be) : null]);
     var lsDonut = donutCard("Largo vs. corto", "Sesgo direccional", donutEl(
       [{ value: longs.length, color: "#3D6FB0" }, { value: shorts.length, color: "#C77B2A" }],
-      state.trades.length ? Math.round(longs.length / state.trades.length * 100) + "%" : "—", "en largo"),
+      scopedTrades().length ? Math.round(longs.length / scopedTrades().length * 100) + "%" : "—", "en largo"),
       [legendRow("#3D6FB0", "Largo", longs.length + " · " + signed(longPnl), pnlColor(longPnl)),
        legendRow("#C77B2A", "Corto", shorts.length + " · " + signed(shortPnl), pnlColor(shortPnl))]);
     return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:18px;" },
@@ -1992,7 +2036,7 @@
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:20px 20px 14px;" },
         h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;" },
           h("div", { style: "font-size:14px;font-weight:600;" }, "Curva de capital"),
-          h("div", { style: "font-size:12px;color:#807B72;font-family:'Geist Mono',monospace;" }, "acumulado · " + state.trades.length + " ops")),
+          h("div", { style: "font-size:12px;color:#807B72;font-family:'Geist Mono',monospace;" }, "acumulado · " + scopedTrades().length + " ops")),
         h("div", { style: "width:100%;" }, equityEl())),
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:20px;" },
         h("div", { style: "font-size:14px;font-weight:600;margin-bottom:2px;" }, "P&L mensual"),
@@ -2063,7 +2107,7 @@
     state.journal.forEach(function (j) { if (isChecklistEntry(j)) checkDays[j.date] = true; });
     if (!Object.keys(checkDays).length) return null; // only once the habit exists
     var tradingDays = {};
-    state.trades.forEach(function (t) { tradingDays[t.date] = true; });
+    scopedTrades().forEach(function (t) { tradingDays[t.date] = true; });
     var tdArr = Object.keys(tradingDays).sort();
     if (!tdArr.length) return null;
     var adhered = tdArr.filter(function (d) { return checkDays[d]; }).length;
@@ -2205,12 +2249,12 @@
   function calendarView() {
     var p = state.calMonth.split("-").map(Number), cy = p[0], cm = p[1];
     var dayMap = {}, monthNet = 0, monthDays = 0, monthGreen = 0;
-    state.trades.forEach(function (t) { if (t.date.slice(0, 7) === state.calMonth) dayMap[t.date] = (dayMap[t.date] || 0) + t.pnl; });
+    scopedTrades().forEach(function (t) { if (t.date.slice(0, 7) === state.calMonth) dayMap[t.date] = (dayMap[t.date] || 0) + t.pnl; });
     var maxAbs = 1;
     Object.keys(dayMap).forEach(function (key) { maxAbs = Math.max(maxAbs, Math.abs(dayMap[key])); });
     Object.keys(dayMap).forEach(function (key) { var v = dayMap[key]; monthNet += v; monthDays++; if (v > 0) monthGreen++; });
     var cntMap = {};
-    state.trades.forEach(function (t) { if (t.date.slice(0, 7) === state.calMonth) cntMap[t.date] = (cntMap[t.date] || 0) + 1; });
+    scopedTrades().forEach(function (t) { if (t.date.slice(0, 7) === state.calMonth) cntMap[t.date] = (cntMap[t.date] || 0) + 1; });
     var first = new Date(cy, cm - 1, 1), startDow = (first.getDay() + 6) % 7, dim = new Date(cy, cm, 0).getDate();
     var cells = [];
     var cellBase = "border-radius:10px;padding:8px 9px;min-height:74px;display:flex;flex-direction:column;justify-content:space-between;border:1px solid #ECE7DD;";
@@ -2254,7 +2298,7 @@
   // ---------- insights / pattern engine (deterministic, no external API) ----------
   var INSIGHTS_MIN = 8;
   function computeInsights() {
-    var T = state.trades;
+    var T = scopedTrades();
     var out = [];
     if (T.length < INSIGHTS_MIN) return out;
     function exp(arr) { return arr.length ? arr.reduce(function (s, t) { return s + t.pnl; }, 0) / arr.length : 0; }
@@ -2356,25 +2400,25 @@
   }
   function insightsView() {
     var wrap = function (kids) { return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:14px;" }, kids); };
-    if (state.trades.length < INSIGHTS_MIN)
-      return wrap(emptyCard("Insights en construcción", "Necesito al menos " + INSIGHTS_MIN + " operaciones para detectar patrones fiables. Llevas " + state.trades.length + ". Sigue registrando y vuelve aquí."));
+    if (scopedTrades().length < INSIGHTS_MIN)
+      return wrap(emptyCard("Insights en construcción", "Necesito al menos " + INSIGHTS_MIN + " operaciones para detectar patrones fiables. Llevas " + scopedTrades().length + ". Sigue registrando y vuelve aquí."));
     var ins = computeInsights();
     if (!ins.length)
       return wrap(emptyCard("Sin patrones destacados todavía", "Tus resultados aún no muestran sesgos fuertes por día, emoción, setup o racha — buena señal de consistencia. Vuelve cuando tengas más operaciones."));
     var counts = ins.reduce(function (a, i) { a[i.sev] = (a[i.sev] || 0) + 1; return a; }, {});
     var header = h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px 20px;" },
-      h("div", { style: "font-size:15px;font-weight:600;margin-bottom:4px;" }, "Patrones detectados en tus " + state.trades.length + " operaciones"),
+      h("div", { style: "font-size:15px;font-weight:600;margin-bottom:4px;" }, "Patrones detectados en tus " + scopedTrades().length + " operaciones"),
       h("div", { style: "font-size:12.5px;color:#807B72;" }, "Análisis automático de tus sesgos por día, hora, setup, emoción, disciplina y comportamiento. " + ((counts.bad || 0) + (counts.warn || 0)) + " a vigilar · " + (counts.good || 0) + " fortaleza(s)."));
     return wrap([header].concat(ins.map(insightCard)));
   }
 
   function analyticsView() {
-    if (!state.trades.length) {
+    if (!scopedTrades().length) {
       return h("div", { style: "max-width:1180px;margin:0 auto;" }, emptyCard("Sin datos para analizar", "Registra operaciones y aquí verás tu curva de capital y tu rendimiento por día, emoción y símbolo."));
     }
     var wdNames = ["Lun", "Mar", "Mié", "Jue", "Vie"], wdG = {};
     wdNames.forEach(function (w) { wdG[w] = 0; });
-    state.trades.forEach(function (t) { var dow = new Date(t.date + "T12:00:00").getDay(); var idx = dow - 1; if (idx >= 0 && idx < 5) wdG[wdNames[idx]] += t.pnl; });
+    scopedTrades().forEach(function (t) { var dow = new Date(t.date + "T12:00:00").getDay(); var idx = dow - 1; if (idx >= 0 && idx < 5) wdG[wdNames[idx]] += t.pnl; });
     var weekdayData = wdNames.map(function (w) { return { label: w, value: wdG[w] }; });
     var emoOrder = ["Tranquilo", "Confiado", "Ansioso", "FOMO"], emoG = group(function (t) { return t.emotion; });
     var emotionData = emoOrder.filter(function (k) { return emoG[k]; }).map(function (k) { return { label: k, value: emoG[k].pnl }; });
@@ -2385,7 +2429,7 @@
       return { symbol: x.key, winRate: Math.round(x.wins / x.count * 100) + "%", count: x.count + " ops", pnlStr: signed(x.pnl), pnlColor: pnlColor(x.pnl), barW: (Math.abs(x.pnl) / symMax * 100).toFixed(0) + "%", barBg: x.pnl >= 0 ? "background:#16915B;" : "background:#D6483B;" };
     });
     var tagG = {};
-    state.trades.forEach(function (t) { (t.tags || []).forEach(function (tg) { if (!tagG[tg]) tagG[tg] = { key: tg, pnl: 0, count: 0, wins: 0 }; tagG[tg].pnl += t.pnl; tagG[tg].count++; if (t.pnl > 0) tagG[tg].wins++; }); });
+    scopedTrades().forEach(function (t) { (t.tags || []).forEach(function (tg) { if (!tagG[tg]) tagG[tg] = { key: tg, pnl: 0, count: 0, wins: 0 }; tagG[tg].pnl += t.pnl; tagG[tg].count++; if (t.pnl > 0) tagG[tg].wins++; }); });
     var tagArr = Object.keys(tagG).map(function (k) { return tagG[k]; }).sort(function (a, b) { return b.pnl - a.pnl; });
     var tagMax = Math.max.apply(null, [1].concat(tagArr.map(function (x) { return Math.abs(x.pnl); })));
     var tagStats = tagArr.map(function (x) {
@@ -2394,7 +2438,7 @@
     var sessG = {}, sessCnt = {}, timed = 0;
     SESSIONS.forEach(function (sname) { sessG[sname] = 0; sessCnt[sname] = 0; });
     var hourG = {};
-    state.trades.forEach(function (t) {
+    scopedTrades().forEach(function (t) {
       var sname = sessionOf(t.time);
       if (sname) { sessG[sname] += t.pnl; sessCnt[sname]++; timed++; }
       if (t.time) { var hr = parseInt(t.time.slice(0, 2), 10); if (!isNaN(hr)) hourG[hr] = (hourG[hr] || 0) + t.pnl; }
@@ -2459,7 +2503,7 @@
       h("div", { style: "display:grid;grid-template-columns:repeat(" + (cols || 4) + ",1fr);gap:12px;" }, cards));
   }
   function statsView() {
-    if (!state.trades.length) {
+    if (!scopedTrades().length) {
       return h("div", { style: "max-width:1180px;margin:0 auto;" }, emptyCard("Sin datos para las estadísticas", "Registra operaciones y aquí verás métricas profesionales: expectativa en R, SQN, Sharpe, Sortino, Kelly, drawdown, rachas y distribución."));
     }
     var x = advancedStats();
@@ -2502,7 +2546,7 @@
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:16px;padding:18px;" },
         h("div", { style: "font-size:14.5px;font-weight:600;margin-bottom:2px;" }, "Distribución de P&L por operación"),
         h("div", { style: "font-size:12px;color:#A39E94;margin-bottom:10px;" }, "Histograma: nº de operaciones por rango de resultado"),
-        histogramEl(state.trades.map(function (t) { return t.pnl; }))),
+        histogramEl(scopedTrades().map(function (t) { return t.pnl; }))),
       h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:16px;padding:18px;" },
         h("div", { style: "font-size:14.5px;font-weight:600;margin-bottom:2px;" }, "Curva de drawdown (underwater)"),
         h("div", { style: "font-size:12px;color:#A39E94;margin-bottom:10px;" }, "Distancia bajo el máximo de capital a lo largo del tiempo"),
@@ -2551,9 +2595,9 @@
   };
   // Group trades by a categorical factor → [{key,count,pnls,value}] for a result.
   function groupByFactor(f, resultKey) {
-    var ru = rUnitOf(state.trades), R = RESULTS[resultKey];
+    var ru = rUnitOf(scopedTrades()), R = RESULTS[resultKey];
     var g = {};
-    state.trades.forEach(function (t) {
+    scopedTrades().forEach(function (t) {
       var keys = f.multi ? f.get(t) : [f.get(t)];
       keys.forEach(function (k) {
         if (k == null || k === "") return;
@@ -2566,13 +2610,13 @@
     }).sort(function (a, b) { return b.value - a.value; });
   }
   function correlationsView() {
-    if (state.trades.length < 3) {
+    if (scopedTrades().length < 3) {
       return h("div", { style: "max-width:1180px;margin:0 auto;" }, emptyCard("Aún no hay suficientes datos", "Registra al menos 3 operaciones (mejor con valoración, emoción, hora y etiquetas) para descubrir qué factores se correlacionan con tus resultados."));
     }
-    var ru = rUnitOf(state.trades);
+    var ru = rUnitOf(scopedTrades());
     // ---- Auto-insights: numeric Pearson r vs P&L ----
     var numInsights = numericFactors().map(function (f) {
-      var pairs = state.trades.map(function (t) { return { x: f.get(t), y: t.pnl }; }).filter(function (p) { return p.x != null && !isNaN(p.x); });
+      var pairs = scopedTrades().map(function (t) { return { x: f.get(t), y: t.pnl }; }).filter(function (p) { return p.x != null && !isNaN(p.x); });
       if (pairs.length < 3) return null;
       var r = pearson(pairs.map(function (p) { return p.x; }), pairs.map(function (p) { return p.y; }));
       return { label: f.label, r: r, n: pairs.length };
@@ -2609,7 +2653,7 @@
     resultSelect.value = resNum ? "net" : state.corrResult;
     var explorer;
     if (sel.type === "num") {
-      var pairs = state.trades.map(function (t) { return { x: sel.f.get(t), y: t.pnl }; }).filter(function (p) { return p.x != null && !isNaN(p.x); });
+      var pairs = scopedTrades().map(function (t) { return { x: sel.f.get(t), y: t.pnl }; }).filter(function (p) { return p.x != null && !isNaN(p.x); });
       var r = pairs.length >= 2 ? pearson(pairs.map(function (p) { return p.x; }), pairs.map(function (p) { return p.y; })) : 0;
       explorer = h("div", null,
         h("div", { style: "display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px;" },
@@ -3320,7 +3364,8 @@
       // Wipe the cached financial snapshot + outbox so it can't be read on a
       // shared device after logout (security hardening F-05).
       if (prevUser) { try { localStorage.removeItem("bitacora_cache_" + prevUser.id); localStorage.removeItem("bitacora_outbox_" + prevUser.id); } catch (e) { } }
-      state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.fTag = "all"; state.fResult = "all"; state.fSymbol = "all"; state.fSetup = "all"; state.fDateFrom = ""; state.fDateTo = ""; state.fRating = "all"; state.fPnlMin = ""; state.fPnlMax = ""; state.quickNote = ""; state.jSearch = ""; state.jMood = "all"; state.pending = 0;
+      state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.scopeAccount = "all"; state.fTag = "all"; state.fResult = "all"; state.fSymbol = "all"; state.fSetup = "all"; state.fDateFrom = ""; state.fDateTo = ""; state.fRating = "all"; state.fPnlMin = ""; state.fPnlMax = ""; state.quickNote = ""; state.jSearch = ""; state.jMood = "all"; state.pending = 0;
+      try { localStorage.removeItem("bitacora_scope_account"); window.__bitacoraScopeAccount = "all"; } catch (e) { }
       state.mfaGate = false; state.mfaChecked = false; state.mfaFactors = []; state.mfaFactorsLoaded = false; render();
     }
   });
