@@ -11,7 +11,9 @@ online; everything else works offline).
   benchmark vs. histórico, control de riesgo, equity curve, latest trades,
   and P&L by setup.
 - **Operaciones** — trade table with result / symbol / setup / account / tag
-  filters; CSV, tax-CSV and full-JSON-backup exports.
+  filters; CSV, tax-CSV and full-JSON-backup exports. Each trade can log its
+  commissions/fees; P&L is stored net of them everywhere (KPIs, stats,
+  calendar, exports), with the gross/commission breakdown shown per trade.
 - **Calendario** — monthly P&L heatmap with navigation and month stats.
 - **Analítica** — equity curve plus P&L by weekday, emotion, symbol, tag,
   session and hour.
