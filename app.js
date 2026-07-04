@@ -197,9 +197,20 @@
   }
   function corrColor(r) { return Math.abs(r) < 0.1 ? "color:#807B72;" : (r >= 0 ? "color:#16915B;" : "color:#D6483B;"); }
 
+  // Point/tick value per contract for the futures this journal supports.
+  // Anything not listed here falls back to 1 (correct for stocks, where P&L
+  // is simply price move × shares) — but for an unlisted FUTURES symbol that
+  // silently understates or overstates P&L. If you trade a future not in this
+  // list, its P&L will be wrong until it's added here.
+  var POINT_VALUE = {
+    ES: 50, MES: 5, NQ: 20, MNQ: 2, YM: 5, MYM: 0.5, RTY: 50, MRTY: 5,
+    CL: 1000, MCL: 100, GC: 100, MGC: 10, SI: 5000, SIL: 1000, HG: 25000, MHG: 2500,
+    NG: 10000, RB: 42000, HO: 42000, PL: 50,
+    ZB: 1000, ZN: 1000, ZF: 1000, ZT: 2000, ZC: 50, ZS: 50, ZW: 50, ZL: 600, ZM: 100,
+    "6E": 125000, "6B": 62500, "6J": 12500000, "6A": 100000, "6C": 100000, "6S": 125000,
+  };
   function PV(t) {
-    var P = { ES: 50, MES: 5, NQ: 20, MNQ: 2, CL: 1000, GC: 100, MGC: 10, RTY: 50, MRTY: 5 };
-    return t.type === "option" ? 100 : (P[(t.symbol || "").toUpperCase()] || 1);
+    return t.type === "option" ? 100 : (POINT_VALUE[(t.symbol || "").toUpperCase()] || 1);
   }
   function pnlOf(t) {
     var dir = t.side === "long" ? 1 : -1;
@@ -500,10 +511,10 @@
   }
   function exportCSV(rows) {
     if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
-    var headers = ["Fecha", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "Setup", "Emoción", "Valoración", "Cuenta", "PnL", "Notas"];
+    var headers = ["Fecha", "Hora", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "Setup", "Emoción", "Valoración", "Cuenta", "PnL", "MAE", "MFE", "Etiquetas", "Notas"];
     var lines = [headers.map(csvCell).join(",")];
     rows.forEach(function (t) {
-      lines.push([t.date, t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl, t.note].map(csvCell).join(","));
+      lines.push([t.date, t.time || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl, t.mae === "" ? "" : t.mae, t.mfe === "" ? "" : t.mfe, (t.tags || []).join("; "), t.note].map(csvCell).join(","));
     });
     var csv = "﻿" + lines.join("\r\n"); // BOM so Excel reads accents correctly
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -1525,7 +1536,9 @@
 
   function sidebar() {
     var m = metrics();
-    var acctBal = 25000 + m.net;
+    // Real total across the user's own accounts (their own entered balances),
+    // not a fabricated placeholder — was previously a hardcoded "25000 + net".
+    var acctBal = state.accounts.reduce(function (a, acc) { return a + (Number(acc.balance) || 0); }, 0);
     var today = todayISO();
     var todayPnl = state.trades.filter(function (t) { return t.date === today; }).reduce(function (a, t) { return a + t.pnl; }, 0);
     var navBase = "display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:9px 11px;border-radius:9px;font-size:13.5px;font-weight:500;transition:background .12s;";
@@ -1558,7 +1571,7 @@
         navItem("settings", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', "Ajustes")),
       h("div", { class: "side-foot", style: "margin-top:auto;display:flex;flex-direction:column;gap:12px;" },
         h("div", { style: "border:1px solid #ECE7DD;border-radius:12px;padding:14px;background:#FBFAF7;" },
-          h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, "Cuenta · Sim"),
+          h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, "Balance total"),
           h("div", { style: "font-family:'Geist Mono',monospace;font-size:21px;font-weight:600;margin-top:6px;letter-spacing:-0.5px;" }, money(acctBal)),
           h("div", { style: "display:flex;align-items:center;gap:6px;margin-top:8px;" },
             h("span", { style: "font-size:11px;color:#807B72;" }, "Hoy"),
