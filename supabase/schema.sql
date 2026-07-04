@@ -40,6 +40,7 @@ create table if not exists public.trades (
   rating integer not null default 3,
   note text not null default '',
   pnl numeric not null default 0,
+  commission numeric not null default 0,
   account_id uuid,
   tags text[] not null default '{}',
   mae numeric,
@@ -92,6 +93,7 @@ alter table public.trades add column if not exists emotion text default 'Tranqui
 alter table public.trades add column if not exists rating integer default 3;
 alter table public.trades add column if not exists note text default '';
 alter table public.trades add column if not exists pnl numeric default 0;
+alter table public.trades add column if not exists commission numeric default 0;
 alter table public.trades add column if not exists account_id uuid;
 alter table public.trades add column if not exists tags text[] default '{}';
 alter table public.trades add column if not exists mae numeric;
@@ -126,6 +128,7 @@ alter table public.trades alter column emotion set default 'Tranquilo';
 alter table public.trades alter column rating set default 3;
 alter table public.trades alter column note set default '';
 alter table public.trades alter column pnl set default 0;
+alter table public.trades alter column commission set default 0;
 alter table public.trades alter column tags set default '{}';
 alter table public.trades alter column created_at set default now();
 

@@ -61,6 +61,7 @@ expected_columns(table_name, column_name) as (
     ('trades', 'rating'),
     ('trades', 'note'),
     ('trades', 'pnl'),
+    ('trades', 'commission'),
     ('trades', 'account_id'),
     ('trades', 'tags'),
     ('trades', 'mae'),
