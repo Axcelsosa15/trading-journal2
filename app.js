@@ -154,6 +154,7 @@
     loadingData: false,
     view: "dashboard",
     trades: [], journal: [], accounts: [],
+    savingTrade: false, savingJournal: false, savingQuickNote: false, savingAccount: false,
     selectedId: null,
     fResult: "all", fSymbol: "all", fSetup: "all", fAccount: "all", fTag: "all",
     fDateFrom: "", fDateTo: "", fPnlMin: "", fPnlMax: "", fRating: "all",
@@ -209,16 +210,29 @@
   }
   function corrColor(r) { return Math.abs(r) < 0.1 ? "color:#807B72;" : (r >= 0 ? "color:#16915B;" : "color:#D6483B;"); }
 
+  // Standard CME/CBOT/NYMEX/COMEX point values (USD per 1.00 move in the quoted price).
+  var FUTURES_PV = {
+    ES: 50, MES: 5, NQ: 20, MNQ: 2, YM: 5, MYM: 0.5, RTY: 50, MRTY: 5,
+    CL: 1000, MCL: 100, QM: 500, NG: 10000, RB: 42000, HO: 42000,
+    GC: 100, MGC: 10, SI: 5000, SIL: 1000, HG: 25000, PL: 50, PA: 100,
+    ZB: 1000, ZN: 1000, ZF: 1000, ZT: 2000, UB: 1000,
+    "6E": 125000, "6B": 62500, "6A": 100000, "6C": 100000, "6S": 125000,
+    ZC: 50, ZW: 50, ZS: 50
+  };
   function PV(t) {
-    var P = { ES: 50, MES: 5, NQ: 20, MNQ: 2, CL: 1000, GC: 100, MGC: 10, RTY: 50, MRTY: 5 };
-    return t.type === "option" ? 100 : (P[(t.symbol || "").toUpperCase()] || 1);
+    return t.type === "option" ? 100 : (FUTURES_PV[(t.symbol || "").toUpperCase()] || 1);
   }
+  function knownFuturesSymbol(sym) { return !!FUTURES_PV[(sym || "").toUpperCase()]; }
   function pnlOf(t) {
     var dir = t.side === "long" ? 1 : -1;
     return Math.round((Number(t.exit) - Number(t.entry)) * PV(t) * Number(t.contracts) * dir);
   }
+  // Net of broker commission/fees — every stat that reads t.pnl becomes net-basis automatically.
+  function netPnlOf(t, commission) {
+    return Math.round(pnlOf(t) - (Number(commission) || 0));
+  }
   function blankDraft() {
-    return { symbol: "MES", type: "future", side: "long", contracts: 1, entry: "", exit: "", date: todayISO(), time: "", setup: "Ruptura", emotion: "Tranquilo", rating: 3, note: "", account_id: "", tags: "", mae: "", mfe: "", screenshot_path: "", _imageFile: null };
+    return { symbol: "MES", type: "future", side: "long", contracts: 1, entry: "", exit: "", date: todayISO(), time: "", setup: "Ruptura", emotion: "Tranquilo", rating: 3, note: "", account_id: "", tags: "", mae: "", mfe: "", commission: "", screenshot_path: "", _imageFile: null };
   }
   function blankAccountDraft() {
     return { name: "", kind: "fondeo", firm: "", balance: "", currency: "USD", phase: "", status: "activa", profit_target: "", max_drawdown: "", notes: "" };
@@ -229,7 +243,7 @@
 
   // ---------- data access (Supabase) ----------
   function coerceTrade(r) {
-    return { id: r.id, date: r.date, time: r.time || "", symbol: r.symbol, type: r.type, side: r.side, contracts: Number(r.contracts), entry: Number(r.entry), exit: Number(r.exit), setup: r.setup, emotion: r.emotion, rating: Number(r.rating), note: r.note || "", pnl: Number(r.pnl), account_id: r.account_id || null, tags: Array.isArray(r.tags) ? r.tags : [], mae: r.mae == null ? "" : Number(r.mae), mfe: r.mfe == null ? "" : Number(r.mfe), screenshot_path: r.screenshot_path || null };
+    return { id: r.id, date: r.date, time: r.time || "", symbol: r.symbol, type: r.type, side: r.side, contracts: Number(r.contracts), entry: Number(r.entry), exit: Number(r.exit), setup: r.setup, emotion: r.emotion, rating: Number(r.rating), note: r.note || "", pnl: Number(r.pnl), commission: r.commission == null ? 0 : Number(r.commission), account_id: r.account_id || null, tags: Array.isArray(r.tags) ? r.tags : [], mae: r.mae == null ? "" : Number(r.mae), mfe: r.mfe == null ? "" : Number(r.mfe), screenshot_path: r.screenshot_path || null };
   }
   function parseTags(str) {
     if (Array.isArray(str)) return str;
@@ -512,10 +526,11 @@
   }
   function exportCSV(rows) {
     if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
-    var headers = ["Fecha", "Hora UTC", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "Setup", "Emoción", "Valoración", "Cuenta", "PnL", "Notas"];
+    var headers = ["Fecha", "Hora UTC", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "MAE", "MFE", "Setup", "Emoción", "Valoración", "Cuenta", "PnL bruto", "Comisión", "PnL neto", "Etiquetas", "Notas"];
     var lines = [headers.map(csvCell).join(",")];
     rows.forEach(function (t) {
-      lines.push([t.date, t.time || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl, t.note].map(csvCell).join(","));
+      var commission = Number(t.commission) || 0;
+      lines.push([t.date, t.time || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.mae === "" ? "" : t.mae, t.mfe === "" ? "" : t.mfe, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl + commission, commission, t.pnl, (t.tags || []).join(" "), t.note].map(csvCell).join(","));
     });
     var csv = "﻿" + lines.join("\r\n"); // BOM so Excel reads accents correctly
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -540,10 +555,11 @@
   function exportTax(rows) {
     if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
     var sorted = rows.slice().sort(function (a, b) { return a.date < b.date ? -1 : 1; });
-    var headers = ["Año", "Fecha", "Cuenta", "Símbolo", "Instrumento", "Dirección", "Contratos", "PnL"];
+    var headers = ["Año", "Fecha", "Cuenta", "Símbolo", "Instrumento", "Dirección", "Contratos", "PnL bruto", "Comisión", "PnL neto"];
     var lines = [headers.map(csvCell).join(",")];
     sorted.forEach(function (t) {
-      lines.push([t.date.slice(0, 4), t.date, accountName(t.account_id) || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.pnl].map(csvCell).join(","));
+      var commission = Number(t.commission) || 0;
+      lines.push([t.date.slice(0, 4), t.date, accountName(t.account_id) || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.pnl + commission, commission, t.pnl].map(csvCell).join(","));
     });
     downloadText("bitacora-impuestos-" + todayISO() + ".csv", "﻿" + lines.join("\r\n"), "text/csv");
   }
@@ -703,6 +719,7 @@
     { k: "entry", label: "Entrada", req: true, kw: /entrada|entry|apertura|open/i },
     { k: "exit", label: "Salida", req: true, kw: /salida|exit|cierre|close/i },
     { k: "pnl", label: "P&L", kw: /pnl|p&l|p\/l|profit|gananc|resultado|net/i },
+    { k: "commission", label: "Comisión", kw: /comisi[óo]n|commission|fee|fees/i },
     { k: "setup", label: "Setup", kw: /setup|estrategia|strategy/i },
     { k: "emotion", label: "Emoción", kw: /emoci|emotion|mood/i },
     { k: "rating", label: "Valoración", kw: /valora|rating|score|estrella/i },
@@ -779,8 +796,12 @@
     var type = map.type >= 0 ? importType(get("type")) : "future";
     var ratingRaw = map.rating >= 0 ? Math.round(importNum(get("rating"))) : 3;
     var rating = ratingRaw >= 1 && ratingRaw <= 5 ? ratingRaw : 3;
+    var commissionRaw = map.commission >= 0 ? importNum(get("commission")) : NaN;
+    var commission = isNaN(commissionRaw) ? 0 : Math.abs(commissionRaw);
+    // A supplied P&L column is trusted as-is (brokers usually net fees in already);
+    // only computed-from-price P&L subtracts the imported commission.
     var pnl = map.pnl >= 0 && !isNaN(importNum(get("pnl"))) ? Math.round(importNum(get("pnl")))
-      : pnlOf({ symbol: symbol, type: type, side: side, contracts: contracts, entry: entry, exit: exit });
+      : netPnlOf({ symbol: symbol, type: type, side: side, contracts: contracts, entry: entry, exit: exit }, commission);
     var acctId = null;
     if (map.account >= 0) {
       var an = String(get("account") || "").trim().toLowerCase();
@@ -795,7 +816,7 @@
         setup: (map.setup >= 0 && String(get("setup")).trim()) || "Ruptura",
         emotion: (map.emotion >= 0 && String(get("emotion")).trim()) || "Tranquilo",
         rating: rating, note: map.note >= 0 ? String(get("note") || "") : "",
-        pnl: pnl, account_id: acctId, tags: [], mae: null, mfe: null,
+        pnl: pnl, commission: commission, account_id: acctId, tags: [], mae: null, mfe: null,
       },
     };
   }
@@ -924,44 +945,51 @@
 
   // ---------- mutations ----------
   async function saveTrade() {
+    if (state.savingTrade) return;
     var d = state.draft;
     if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
-    if (!isFinite(Number(d.entry)) || !isFinite(Number(d.exit))) return;
-    var pnl = pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
-    // Upload a freshly attached screenshot first (online only); otherwise keep
-    // whatever path the trade already had.
-    var shotPath = d.screenshot_path || null;
-    if (d._imageFile) { var p = await uploadScreenshot(d._imageFile); if (p) shotPath = p; }
-    var row = { date: d.date, time: d.time || null, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
-    if (state.editId) {
-      if (!isOnline()) { window.alert("Necesitas conexión para editar una operación. Las operaciones nuevas sí se guardan sin conexión."); return; }
-      var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
-      if (up.error) { window.alert("No se pudo actualizar la operación: " + up.error.message); return; }
-      var updated = coerceTrade(up.data);
-      state.trades = state.trades.map(function (t) { return t.id === updated.id ? updated : t; });
-    } else if (!isOnline()) {
-      // Offline: optimistic insert + queue for sync when back online.
-      var tempId = "tmp_" + Date.now();
-      state.trades = [coerceTrade(Object.assign({ id: tempId }, row))].concat(state.trades);
-      enqueue("trades", row, tempId);
-    } else {
-      try {
-        var res = await SB.from("trades").insert(row).select().single();
-        if (res.error) throw res.error;
-        state.trades = [coerceTrade(res.data)].concat(state.trades);
-      } catch (e) {
-        var tid = "tmp_" + Date.now();
-        state.trades = [coerceTrade(Object.assign({ id: tid }, row))].concat(state.trades);
-        enqueue("trades", row, tid);
+    if (!isFinite(Number(d.entry)) || !isFinite(Number(d.exit)) || !commissionValid(d)) return;
+    state.savingTrade = true; renderModal();
+    try {
+      var commission = d.commission === "" || d.commission == null ? 0 : Number(d.commission);
+      var pnl = netPnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) }, commission);
+      // Upload a freshly attached screenshot first (online only); otherwise keep
+      // whatever path the trade already had.
+      var shotPath = d.screenshot_path || null;
+      if (d._imageFile) { var p = await uploadScreenshot(d._imageFile); if (p) shotPath = p; }
+      var row = { date: d.date, time: d.time || null, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, commission: commission, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
+      if (state.editId) {
+        if (!isOnline()) { window.alert("Necesitas conexión para editar una operación. Las operaciones nuevas sí se guardan sin conexión."); return; }
+        var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
+        if (up.error) { window.alert("No se pudo actualizar la operación: " + up.error.message); return; }
+        var updated = coerceTrade(up.data);
+        state.trades = state.trades.map(function (t) { return t.id === updated.id ? updated : t; });
+      } else if (!isOnline()) {
+        // Offline: optimistic insert + queue for sync when back online.
+        var tempId = "tmp_" + Date.now();
+        state.trades = [coerceTrade(Object.assign({ id: tempId }, row))].concat(state.trades);
+        enqueue("trades", row, tempId);
+      } else {
+        try {
+          var res = await SB.from("trades").insert(row).select().single();
+          if (res.error) throw res.error;
+          state.trades = [coerceTrade(res.data)].concat(state.trades);
+        } catch (e) {
+          var tid = "tmp_" + Date.now();
+          state.trades = [coerceTrade(Object.assign({ id: tid }, row))].concat(state.trades);
+          enqueue("trades", row, tid);
+        }
       }
+      saveCache();
+      closeAdd();
+    } finally {
+      state.savingTrade = false;
+      render();
     }
-    saveCache();
-    closeAdd();
-    render();
   }
   function openEdit(t) {
     state.editId = t.id;
-    state.draft = { symbol: t.symbol, type: t.type, side: t.side, contracts: t.contracts, entry: t.entry, exit: t.exit, date: t.date, time: t.time || "", setup: t.setup, emotion: t.emotion, rating: t.rating, note: t.note, account_id: t.account_id || "", tags: (t.tags || []).join(", "), mae: t.mae, mfe: t.mfe, screenshot_path: t.screenshot_path || "", _imageFile: null };
+    state.draft = { symbol: t.symbol, type: t.type, side: t.side, contracts: t.contracts, entry: t.entry, exit: t.exit, date: t.date, time: t.time || "", setup: t.setup, emotion: t.emotion, rating: t.rating, note: t.note, account_id: t.account_id || "", tags: (t.tags || []).join(", "), mae: t.mae, mfe: t.mfe, commission: t.commission || "", screenshot_path: t.screenshot_path || "", _imageFile: null };
     state.selectedId = null;
     state.showAdd = true;
     render();
@@ -984,21 +1012,23 @@
     render();
   }
   async function saveJournal() {
+    if (state.savingJournal) return;
     var d = state.jdraft;
     if (!d.title.trim()) return;
+    state.savingJournal = true; renderModal();
     var row = { date: d.date, mood: d.mood, title: d.title.trim(), body: d.body, lesson: d.lesson };
     if (state.journalEditId) {
-      if (!isOnline()) { window.alert("Necesitas conexión para editar una entrada."); return; }
+      if (!isOnline()) { window.alert("Necesitas conexión para editar una entrada."); state.savingJournal = false; render(); return; }
       var up = await SB.from("journal").update(row).eq("id", state.journalEditId).select().single();
-      if (up.error) { window.alert("No se pudo actualizar la entrada: " + up.error.message); return; }
+      if (up.error) { window.alert("No se pudo actualizar la entrada: " + up.error.message); state.savingJournal = false; render(); return; }
       var u = coerceJournal(up.data);
       state.journal = state.journal.map(function (j) { return j.id === u.id ? u : j; });
-      saveCache(); closeJournalAdd(); render(); return;
+      state.savingJournal = false; saveCache(); closeJournalAdd(); render(); return;
     }
     if (!isOnline()) {
       var tid = "tmp_" + Date.now();
       state.journal = [coerceJournal(Object.assign({ id: tid }, row))].concat(state.journal);
-      enqueue("journal", row, tid); saveCache(); closeJournalAdd(); render(); return;
+      enqueue("journal", row, tid); state.savingJournal = false; saveCache(); closeJournalAdd(); render(); return;
     }
     try {
       var res = await SB.from("journal").insert(row).select().single();
@@ -1009,6 +1039,7 @@
       state.journal = [coerceJournal(Object.assign({ id: tid2 }, row))].concat(state.journal);
       enqueue("journal", row, tid2);
     }
+    state.savingJournal = false;
     saveCache();
     closeJournalAdd();
     render();
@@ -1027,13 +1058,15 @@
     saveCache(); closeJournalAdd(); render();
   }
   async function saveJournalQuick() {
+    if (state.savingQuickNote) return;
     var text = (state.quickNote || "").trim();
     if (!text) return;
+    state.savingQuickNote = true; render();
     var row = { date: todayISO(), mood: state.quickMood, title: text, body: "", lesson: "" };
     if (!isOnline()) {
       var tid = "tmp_" + Date.now();
       state.journal = [coerceJournal(Object.assign({ id: tid }, row))].concat(state.journal);
-      enqueue("journal", row, tid); state.quickNote = ""; saveCache(); render(); return;
+      enqueue("journal", row, tid); state.quickNote = ""; state.savingQuickNote = false; saveCache(); render(); return;
     }
     try {
       var res = await SB.from("journal").insert(row).select().single();
@@ -1045,6 +1078,7 @@
       enqueue("journal", row, tid2);
     }
     state.quickNote = "";
+    state.savingQuickNote = false;
     saveCache();
     render();
   }
@@ -1059,28 +1093,34 @@
     state.calMonth = y + "-" + pad(m); render();
   }
   async function saveAccount() {
+    if (state.savingAccount) return;
     var d = state.accountDraft;
     if (!d.name.trim()) return;
     if (!isOnline()) { window.alert("Necesitas conexión para crear o editar cuentas."); return; }
-    var row = {
-      name: d.name.trim(), kind: d.kind, firm: d.firm || null, balance: Number(d.balance) || 0, currency: d.currency || "USD",
-      phase: d.phase || null, status: d.status,
-      profit_target: d.profit_target === "" ? null : Number(d.profit_target),
-      max_drawdown: d.max_drawdown === "" ? null : Number(d.max_drawdown), notes: d.notes,
-    };
-    if (state.accountEditId) {
-      var up = await SB.from("accounts").update(row).eq("id", state.accountEditId).select().single();
-      if (up.error) { window.alert("No se pudo actualizar la cuenta: " + up.error.message); return; }
-      var u = coerceAccount(up.data);
-      state.accounts = state.accounts.map(function (a) { return a.id === u.id ? u : a; });
-    } else {
-      var res = await SB.from("accounts").insert(row).select().single();
-      if (res.error) { window.alert("No se pudo crear la cuenta: " + res.error.message); return; }
-      state.accounts = [coerceAccount(res.data)].concat(state.accounts);
+    state.savingAccount = true; renderModal();
+    try {
+      var row = {
+        name: d.name.trim(), kind: d.kind, firm: d.firm || null, balance: Number(d.balance) || 0, currency: d.currency || "USD",
+        phase: d.phase || null, status: d.status,
+        profit_target: d.profit_target === "" ? null : Number(d.profit_target),
+        max_drawdown: d.max_drawdown === "" ? null : Number(d.max_drawdown), notes: d.notes,
+      };
+      if (state.accountEditId) {
+        var up = await SB.from("accounts").update(row).eq("id", state.accountEditId).select().single();
+        if (up.error) { window.alert("No se pudo actualizar la cuenta: " + up.error.message); return; }
+        var u = coerceAccount(up.data);
+        state.accounts = state.accounts.map(function (a) { return a.id === u.id ? u : a; });
+      } else {
+        var res = await SB.from("accounts").insert(row).select().single();
+        if (res.error) { window.alert("No se pudo crear la cuenta: " + res.error.message); return; }
+        state.accounts = [coerceAccount(res.data)].concat(state.accounts);
+      }
+      saveCache();
+      closeAccountAdd();
+    } finally {
+      state.savingAccount = false;
+      render();
     }
-    saveCache();
-    closeAccountAdd();
-    render();
   }
   async function deleteAccount() {
     var id = state.accountEditId;
@@ -1179,7 +1219,8 @@
     var gp = wins.reduce(function (a, t) { return a + t.pnl; }, 0);
     var gl = Math.abs(losses.reduce(function (a, t) { return a + t.pnl; }, 0));
     var net = gp - gl, wr = n ? wins.length / n : 0;
-    return { n: n, net: net, wr: wr, wins: wins.length, losses: losses.length, pf: gl ? gp / gl : (gp > 0 ? Infinity : 0), exp: n ? net / n : 0, gp: gp, gl: gl };
+    var totalCommission = ts.reduce(function (a, t) { return a + (Number(t.commission) || 0); }, 0);
+    return { n: n, net: net, wr: wr, wins: wins.length, losses: losses.length, pf: gl ? gp / gl : (gp > 0 ? Infinity : 0), exp: n ? net / n : 0, gp: gp, gl: gl, totalCommission: totalCommission, grossPnl: net + totalCommission };
   }
   function group(keyFn) {
     var m = {};
@@ -1567,7 +1608,7 @@
 
   function sidebar() {
     var m = metrics();
-    var acctBal = 25000 + m.net;
+    var acctBal = state.accounts.length ? state.accounts.reduce(function (a, acc) { return a + (Number(acc.balance) || 0); }, 0) : m.net;
     var today = todayISO();
     var todayPnl = state.trades.filter(function (t) { return t.date === today; }).reduce(function (a, t) { return a + t.pnl; }, 0);
     var navBase = "display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:9px 11px;border-radius:9px;font-size:13.5px;font-weight:500;transition:background .12s;";
@@ -1600,7 +1641,7 @@
         navItem("settings", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', "Ajustes")),
       h("div", { class: "side-foot", style: "margin-top:auto;display:flex;flex-direction:column;gap:12px;" },
         h("div", { style: "border:1px solid #ECE7DD;border-radius:12px;padding:14px;background:#FBFAF7;" },
-          h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, "Cuenta · Sim"),
+          h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, state.accounts.length ? "Balance total" : "P&L acumulado"),
           h("div", { style: "font-family:'Geist Mono',monospace;font-size:21px;font-weight:600;margin-top:6px;letter-spacing:-0.5px;" }, money(acctBal)),
           h("div", { style: "display:flex;align-items:center;gap:6px;margin-top:8px;" },
             h("span", { style: "font-size:11px;color:#807B72;" }, "Hoy"),
@@ -1833,7 +1874,7 @@
     return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:18px;" },
       onb,
       h("div", { style: "display:grid;grid-template-columns:repeat(4,1fr);gap:14px;" },
-        kpiCard("P&L neto", pnlColor(m.net), signed(m.net), null, m.n + " operaciones cerradas"),
+        kpiCard("P&L neto", pnlColor(m.net), signed(m.net), null, m.n + " operaciones cerradas" + (m.totalCommission > 0 ? " · " + money(m.totalCommission) + " en comisiones" : "")),
         kpiCard("Win rate", "", Math.round(m.wr * 100) + "%", winBar, m.wins + " ganadoras · " + m.losses + " perdedoras"),
         kpiCard("Profit factor", "", ratioStr(m.pf), null, money(m.gp) + " / " + money(m.gl)),
         kpiCard("Esperanza / op.", pnlColor(m.exp), signed(m.exp), null, "media por operación")),
@@ -2783,6 +2824,7 @@
             h("div", { style: "font-size:12px;color:#807B72;" }, "Resultado"),
             h("div", { style: "font-family:'Geist Mono',monospace;font-size:34px;font-weight:700;letter-spacing:-1.5px;margin-top:4px;" + pnlColor(st.pnl) }, signed(st.pnl)),
             h("div", { style: "font-size:12px;color:#A39E94;margin-top:4px;" }, movePts),
+            (Number(st.commission) > 0) ? h("div", { style: "font-size:11.5px;color:#807B72;margin-top:6px;" }, signed(st.pnl + Number(st.commission)) + " bruto − " + money(st.commission) + " comisión") : null,
             (function () { var ru = rUnitOf(state.trades); return ru > 0 ? h("div", { style: "display:inline-block;margin-top:8px;font-family:'Geist Mono',monospace;font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;" + (st.pnl >= 0 ? "background:#E8F3EC;color:#16915B;" : "background:#FBEAE7;color:#D6483B;") }, rStr(st.pnl / ru) + " · 1R = " + money(ru)) : null; })()),
           h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px;" },
             infoBox("Entrada", num(st.entry)), infoBox("Salida", num(st.exit)),
@@ -2898,13 +2940,17 @@
     return frame;
   }
 
+  function commissionValid(d) { return d.commission === "" || d.commission == null || (isFinite(Number(d.commission)) && Number(d.commission) >= 0); }
   function draftPnl() {
     var d = state.draft;
-    var valid = d.entry !== "" && d.exit !== "";
-    var pnl = valid ? pnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts) || 0, entry: Number(d.entry), exit: Number(d.exit) }) : 0;
-    return { valid: valid, pnl: pnl };
+    var valid = d.entry !== "" && d.exit !== "" && commissionValid(d);
+    var t = { symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts) || 0, entry: Number(d.entry), exit: Number(d.exit) };
+    var commission = d.commission === "" || d.commission == null ? 0 : Number(d.commission);
+    var gross = valid ? pnlOf(t) : 0;
+    var pnl = valid ? netPnlOf(t, commission) : 0;
+    return { valid: valid, pnl: pnl, gross: gross, commission: commission };
   }
-  function isSaveValid() { var d = state.draft; return d.symbol && d.entry !== "" && d.exit !== "" && Number(d.contracts) > 0; }
+  function isSaveValid() { var d = state.draft; return d.symbol && d.entry !== "" && d.exit !== "" && Number(d.contracts) > 0 && commissionValid(d); }
 
   function modalFrame(title, onClose, bodyChildren, footerChildren, width) {
     var modal = h("div", { class: "dc-modal", style: "position:relative;width:" + (width || 540) + "px;max-width:100%;max-height:92vh;overflow-y:auto;background:#fff;border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,.22);" },
@@ -2976,20 +3022,31 @@
     var inMono = "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;font-family:'Geist Mono',monospace;";
     var editing = state.editId != null;
     var previewSpan = h("span", { style: "font-family:'Geist Mono',monospace;font-size:18px;font-weight:600;" });
-    var saveBtn = h("button", { onClick: saveTrade }, editing ? "Guardar cambios" : "Guardar operación");
+    var saveBtn = h("button", { onClick: saveTrade }, state.savingTrade ? "Guardando…" : (editing ? "Guardar cambios" : "Guardar operación"));
+    var pvWarning = h("div", { style: "display:none;" });
+    var feeBreakdown = h("div", { style: "display:none;" });
+    var commissionInput = fieldInput(state.draft, "commission", { type: "number", step: "0.01", min: "0", placeholder: "0.00", style: inMono, onInput: function (e) { state.draft.commission = e.target.value; refresh(); } });
     function refresh() {
       var dp = draftPnl();
       previewSpan.textContent = dp.valid ? signed(dp.pnl) : "—";
       previewSpan.style.cssText = "font-family:'Geist Mono',monospace;font-size:18px;font-weight:600;" + (dp.valid ? pnlColor(dp.pnl) : "color:#A39E94;");
-      var valid = isSaveValid();
+      var valid = isSaveValid() && !state.savingTrade;
       saveBtn.style.cssText = "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (valid ? "background:#16181C;color:#fff;" : "background:#CFC9BD;color:#fff;cursor:not-allowed;");
+      var showWarn = d.type === "future" && d.symbol && d.symbol.trim() && !knownFuturesSymbol(d.symbol);
+      pvWarning.style.cssText = showWarn ? "display:block;font-size:12px;color:#B8791A;margin-top:6px;" : "display:none;";
+      pvWarning.textContent = showWarn ? "Símbolo de futuro no reconocido: se está usando $1 por punto (posiblemente incorrecto). Verifica el P&L manualmente." : "";
+      var showFee = dp.valid && dp.commission > 0;
+      feeBreakdown.style.cssText = showFee ? "display:block;font-size:11.5px;color:#807B72;margin-top:4px;" : "display:none;";
+      feeBreakdown.textContent = showFee ? (signed(dp.gross) + " bruto − " + money(dp.commission) + " comisión = " + signed(dp.pnl) + " neto") : "";
+      var commOk = commissionValid(d);
+      commissionInput.style.borderColor = commOk ? "#E2DDD3" : "#D6483B";
     }
     var d = state.draft;
     var note = h("textarea", { rows: "3", placeholder: "¿Qué viste? ¿Seguiste el plan?", style: "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;line-height:1.5;resize:vertical;", onInput: function (e) { d.note = e.target.value; } });
     note.value = d.note;
     var body = [
       h("div", { style: "display:grid;grid-template-columns:1.2fr 1fr 0.9fr;gap:14px;" },
-        field("Símbolo", fieldInput(d, "symbol", { placeholder: "MES, NQ, SPY…", style: inMono + "text-transform:uppercase;", onInput: function (e) { d.symbol = e.target.value; refresh(); } })),
+        field("Símbolo", h("div", null, fieldInput(d, "symbol", { placeholder: "MES, NQ, SPY…", style: inMono + "text-transform:uppercase;", onInput: function (e) { d.symbol = e.target.value; refresh(); } }), pvWarning)),
         field("Fecha", fieldInput(d, "date", { type: "date", style: inMono })),
         field("Hora UTC (opcional)", fieldInput(d, "time", { type: "time", style: inMono }))),
       h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
@@ -3003,7 +3060,9 @@
         field("Setup", fieldSelect(d, "setup", SETUPS.map(function (x) { return [x, x]; }))),
         field("Emoción", fieldSelect(d, "emotion", [["Tranquilo", "Tranquilo"], ["Confiado", "Confiado"], ["Ansioso", "Ansioso"], ["FOMO", "FOMO"]])),
         field("Valoración", fieldSelect(d, "rating", [["1", "★"], ["2", "★★"], ["3", "★★★"], ["4", "★★★★"], ["5", "★★★★★"]]))),
-      field("Cuenta", fieldSelect(d, "account_id", [["", "Sin cuenta"]].concat(state.accounts.map(function (a) { return [a.id, a.name + " · " + (KIND_LABEL[a.kind] || a.kind)]; })))),
+      h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
+        field("Cuenta", fieldSelect(d, "account_id", [["", "Sin cuenta"]].concat(state.accounts.map(function (a) { return [a.id, a.name + " · " + (KIND_LABEL[a.kind] || a.kind)]; })))),
+        field("Comisión (opcional)", commissionInput)),
       field("Etiquetas (separadas por comas)", fieldInput(d, "tags", { placeholder: "NY open, breakout, BTC, 5m…", style: "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;" })),
       h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
         field("MAE (excursión adversa)", fieldInput(d, "mae", { type: "number", step: "0.01", placeholder: "opcional", style: inMono })),
@@ -3019,8 +3078,10 @@
           d._imageFile ? h("span", { style: "margin-left:auto;color:#16915B;font-weight:700;" }, "✓") : null, shotInput);
         return field("Captura (opcional)", picker);
       })(),
-      h("div", { style: "display:flex;align-items:center;justify-content:space-between;background:#FBFAF7;border:1px solid #ECE7DD;border-radius:11px;padding:13px 16px;" },
-        h("span", { style: "font-size:12.5px;color:#807B72;" }, "P&L estimado"), previewSpan),
+      h("div", { style: "background:#FBFAF7;border:1px solid #ECE7DD;border-radius:11px;padding:13px 16px;" },
+        h("div", { style: "display:flex;align-items:center;justify-content:space-between;" },
+          h("span", { style: "font-size:12.5px;color:#807B72;" }, "P&L estimado (neto)"), previewSpan),
+        feeBreakdown),
     ];
     var footer = [
       h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #E2DDD3;background:#fff;font-weight:600;font-size:13.5px;", hoverBg: "#FAF8F4", onClick: closeAdd }, "Cancelar"),
@@ -3034,9 +3095,9 @@
   function journalModal() {
     var d = state.jdraft;
     var editing = state.journalEditId != null;
-    var saveBtn = h("button", { onClick: saveJournal }, editing ? "Guardar cambios" : "Guardar entrada");
+    var saveBtn = h("button", { onClick: saveJournal }, state.savingJournal ? "Guardando…" : (editing ? "Guardar cambios" : "Guardar entrada"));
     function refresh() {
-      var valid = d.title.trim().length > 0;
+      var valid = d.title.trim().length > 0 && !state.savingJournal;
       saveBtn.style.cssText = "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (valid ? "background:#16181C;color:#fff;" : "background:#CFC9BD;color:#fff;cursor:not-allowed;");
     }
     var base = "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;";
@@ -3067,9 +3128,9 @@
     var d = state.accountDraft;
     var base = "padding:10px 12px;border:1px solid #E2DDD3;border-radius:9px;font-size:14px;";
     var mono = base + "font-family:'Geist Mono',monospace;";
-    var saveBtn = h("button", { onClick: saveAccount }, editing ? "Guardar cambios" : "Crear cuenta");
+    var saveBtn = h("button", { onClick: saveAccount }, state.savingAccount ? "Guardando…" : (editing ? "Guardar cambios" : "Crear cuenta"));
     function refresh() {
-      var valid = d.name.trim().length > 0;
+      var valid = d.name.trim().length > 0 && !state.savingAccount;
       saveBtn.style.cssText = "flex:1.4;padding:11px;border-radius:10px;font-weight:600;font-size:13.5px;" + (valid ? "background:#16181C;color:#fff;" : "background:#CFC9BD;color:#fff;cursor:not-allowed;");
     }
     var notesTa = h("textarea", { rows: "2", placeholder: "Reglas, notas…", style: base + "line-height:1.5;resize:vertical;", onInput: function (e) { d.notes = e.target.value; } });
