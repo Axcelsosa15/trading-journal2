@@ -535,11 +535,12 @@
   }
   function exportCSV(rows) {
     if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
-    var headers = ["Fecha", "Hora UTC", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "MAE", "MFE", "Setup", "Emoción", "Valoración", "Cuenta", "PnL bruto", "Comisión", "PnL neto", "Etiquetas", "Notas"];
+    var headers = ["Fecha", "Hora UTC", "Sesión", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "MAE", "MFE", "Setup", "Emoción", "Valoración", "Cuenta", "PnL bruto", "Comisión", "PnL neto", "R", "Etiquetas", "Notas"];
     var lines = [headers.map(csvCell).join(",")];
+    var rUnit = rUnitOf(rows); // 1R for this exported set, so each row's R multiple is comparable
     rows.forEach(function (t) {
       var commission = Number(t.commission) || 0;
-      lines.push([t.date, t.time || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.mae === "" ? "" : t.mae, t.mfe === "" ? "" : t.mfe, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl + commission, commission, t.pnl, (t.tags || []).join(" "), t.note].map(csvCell).join(","));
+      lines.push([t.date, t.time || "", sessionOf(t.time) || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.mae === "" ? "" : t.mae, t.mfe === "" ? "" : t.mfe, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl + commission, commission, t.pnl, rUnit ? (t.pnl / rUnit).toFixed(2) : "", (t.tags || []).join(" "), t.note].map(csvCell).join(","));
     });
     var csv = "﻿" + lines.join("\r\n"); // BOM so Excel reads accents correctly
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -773,26 +774,45 @@
     var s = String(v || "").trim().toLowerCase();
     return /opc|option|call|put/.test(s) ? "option" : "future";
   }
-  function importDate(v) {
+  // order: "D" or "M", the file-wide D/M-vs-M/D convention resolved by detectDateOrder()
+  // from any unambiguous row in the same import. Falls back to day-first when the whole
+  // file is ambiguous (e.g. every day number is <=12), same as before.
+  function importDate(v, order) {
     var s = String(v || "").trim();
     var m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/); // ISO-ish YYYY-MM-DD
     if (m) return m[1] + "-" + pad(m[2]) + "-" + pad(m[3]);
     m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/); // D/M/Y or M/D/Y
     if (m) {
       var a = +m[1], b = +m[2];
-      var day = a, mon = b;
-      if (a > 12 && b <= 12) { day = a; mon = b; }        // clearly day-first
+      var day, mon;
+      if (a > 12 && b <= 12) { day = a; mon = b; }         // clearly day-first
       else if (b > 12 && a <= 12) { day = b; mon = a; }    // clearly month-first
-      // else ambiguous → assume day-first (European brokers)
+      else if (order === "M") { mon = a; day = b; }        // ambiguous → apply the file's proven convention
+      else { day = a; mon = b; }                            // ambiguous, no evidence → assume day-first (European brokers)
       if (mon < 1 || mon > 12 || day < 1 || day > 31) return null;
       return m[3] + "-" + pad(mon) + "-" + pad(day);
     }
     return null;
   }
+  // Scans every date cell in the import for one unambiguous D/M/Y or M/D/Y row, so that
+  // ambiguous rows in the same file (e.g. "4/2/2026") follow the file's real convention
+  // instead of each guessing day-first independently and silently swapping day/month.
+  function detectDateOrder(cellRows, dateIdx) {
+    if (dateIdx == null || dateIdx < 0) return null;
+    for (var i = 0; i < cellRows.length; i++) {
+      var v = String((cellRows[i][dateIdx]) || "").trim();
+      var m = v.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+      if (!m) continue;
+      var a = +m[1], b = +m[2];
+      if (a > 12 && b <= 12) return "D";
+      if (b > 12 && a <= 12) return "M";
+    }
+    return null;
+  }
   // Build a DB row from a CSV record + column mapping. Returns {row} or {error}.
-  function buildImportRow(cells, map) {
+  function buildImportRow(cells, map, dateOrder) {
     function get(k) { var i = map[k]; return i != null && i >= 0 ? cells[i] : ""; }
-    var date = importDate(get("date"));
+    var date = importDate(get("date"), dateOrder);
     if (!date) return { error: "fecha inválida" };
     var symbol = String(get("symbol") || "").trim().toUpperCase();
     if (!symbol) return { error: "símbolo vacío" };
@@ -845,8 +865,9 @@
     var existingKeys = {};
     state.trades.forEach(function (t) { existingKeys[tradeDupKey(t)] = true; });
     var seenInFile = {};
+    var dateOrder = detectDateOrder(im.rows.slice(1), im.map.date);
     im.rows.slice(1).forEach(function (cells, n) {
-      var r = buildImportRow(cells, im.map);
+      var r = buildImportRow(cells, im.map, dateOrder);
       if (r.row) {
         var key = tradeDupKey(r.row);
         if (existingKeys[key] || seenInFile[key]) dupCount++;
@@ -1740,7 +1761,9 @@
 
   function sidebar() {
     var m = metrics();
-    var acctBal = state.accounts.length ? state.accounts.reduce(function (a, acc) { return a + (Number(acc.balance) || 0); }, 0) : m.net;
+    // Balance total = funded/starting balance per account + that account's realized net P&L,
+    // so it tracks live results instead of staying frozen at whatever was typed in on account creation.
+    var acctBal = state.accounts.length ? state.accounts.reduce(function (a, acc) { return a + (Number(acc.balance) || 0) + accountStats(acc.id).net; }, 0) : m.net;
     var today = todayISO();
     var todayPnl = state.trades.filter(function (t) { return t.date === today; }).reduce(function (a, t) { return a + t.pnl; }, 0);
     var navBase = "display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:9px 11px;border-radius:9px;font-size:13.5px;font-weight:500;transition:background .12s;";
