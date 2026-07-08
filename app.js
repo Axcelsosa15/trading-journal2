@@ -535,11 +535,11 @@
   }
   function exportCSV(rows) {
     if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
-    var headers = ["Fecha", "Hora UTC", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "MAE", "MFE", "Setup", "Emoción", "Valoración", "Cuenta", "PnL bruto", "Comisión", "PnL neto", "Etiquetas", "Notas"];
+    var headers = ["Fecha", "Hora UTC", "Sesión", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "MAE", "MFE", "Setup", "Emoción", "Valoración", "Cuenta", "PnL bruto", "Comisión", "PnL neto", "Etiquetas", "Notas"];
     var lines = [headers.map(csvCell).join(",")];
     rows.forEach(function (t) {
       var commission = Number(t.commission) || 0;
-      lines.push([t.date, t.time || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.mae === "" ? "" : t.mae, t.mfe === "" ? "" : t.mfe, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl + commission, commission, t.pnl, (t.tags || []).join(" "), t.note].map(csvCell).join(","));
+      lines.push([t.date, t.time || "", sessionOf(t.time) || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.mae === "" ? "" : t.mae, t.mfe === "" ? "" : t.mfe, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl + commission, commission, t.pnl, (t.tags || []).join(" "), t.note].map(csvCell).join(","));
     });
     var csv = "﻿" + lines.join("\r\n"); // BOM so Excel reads accents correctly
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -1740,7 +1740,13 @@
 
   function sidebar() {
     var m = metrics();
-    var acctBal = state.accounts.length ? state.accounts.reduce(function (a, acc) { return a + (Number(acc.balance) || 0); }, 0) : m.net;
+    // "Balance total" is the trader's current equity, not the account's starting
+    // balance: each account's starting balance plus the net (already commission-net)
+    // P&L realized on it. Summing raw account.balance alone never moved after a
+    // trade closed, so the figure was frozen at account-creation time.
+    var acctBal = state.accounts.length
+      ? state.accounts.reduce(function (a, acc) { return a + (Number(acc.balance) || 0) + accountStats(acc.id).net; }, 0)
+      : m.net;
     var today = todayISO();
     var todayPnl = state.trades.filter(function (t) { return t.date === today; }).reduce(function (a, t) { return a + t.pnl; }, 0);
     var navBase = "display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:9px 11px;border-radius:9px;font-size:13.5px;font-weight:500;transition:background .12s;";
@@ -1904,7 +1910,8 @@
           h("span", { style: "color:#807B72;" }, label),
           h("span", { style: "font-family:'Geist Mono',monospace;font-weight:600;" + (valStyle || "") }, value));
       }
-      rows.push(row("Balance", "$" + Number(a.balance).toLocaleString("en-US") + " " + a.currency));
+      rows.push(row("Balance inicial", "$" + Number(a.balance).toLocaleString("en-US") + " " + a.currency));
+      rows.push(row("Balance actual", "$" + Math.round(Number(a.balance) + st.net).toLocaleString("en-US") + " " + a.currency, pnlColor(st.net)));
       if (a.phase) rows.push(row("Fase", a.phase, "font-family:inherit;"));
       if (a.profit_target !== "") rows.push(row("Objetivo", "$" + Number(a.profit_target).toLocaleString("en-US")));
       if (a.max_drawdown !== "") rows.push(row("Drawdown máx.", "$" + Number(a.max_drawdown).toLocaleString("en-US")));
