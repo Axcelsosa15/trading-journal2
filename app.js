@@ -1046,6 +1046,14 @@
     var d = state.draft;
     if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
     if (!isFinite(Number(d.entry)) || !isFinite(Number(d.exit)) || !commissionValid(d)) return;
+    // Same guard CSV import already applies (tradeDupKey): catch a manually
+    // re-entered fill (same date/symbol/side/size/entry/exit), not just a
+    // double-click on this modal.
+    if (!state.editId) {
+      var candidateKey = tradeDupKey({ date: d.date, symbol: d.symbol, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
+      var isDup = state.trades.some(function (t) { return tradeDupKey(t) === candidateKey; });
+      if (isDup && !window.confirm("Ya existe una operación con la misma fecha, símbolo, dirección, tamaño, entrada y salida. ¿Guardar de todas formas?")) return;
+    }
     state.savingTrade = true; renderModal();
     try {
       var commission = d.commission === "" || d.commission == null ? 0 : Number(d.commission);
@@ -1452,7 +1460,9 @@
       avgDay: dayVals.length ? mean(dayVals) : 0, bestDay: dayVals.length ? Math.max.apply(null, dayVals) : 0, worstDay: dayVals.length ? Math.min.apply(null, dayVals) : 0,
     };
   }
-  // Trading session derived from the entry hour (local time the user typed).
+  // Trading session derived from the entry hour. The form asks for "Hora UTC"
+  // and the buckets below (7-13/13-22/else) are calibrated for UTC input —
+  // there is no timezone conversion, so a local wall-clock time will bucket wrong.
   var SESSIONS = ["Asia", "Londres", "Nueva York"];
   function sessionOf(time) {
     if (!time) return null;
