@@ -535,11 +535,15 @@
   }
   function exportCSV(rows) {
     if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
-    var headers = ["Fecha", "Hora UTC", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "MAE", "MFE", "Setup", "Emoción", "Valoración", "Cuenta", "PnL bruto", "Comisión", "PnL neto", "Etiquetas", "Notas"];
+    var headers = ["Fecha", "Hora UTC", "Sesión", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "MAE", "MFE", "Setup", "Emoción", "Valoración", "Cuenta", "PnL bruto", "Comisión", "PnL neto", "R", "Etiquetas", "Notas"];
     var lines = [headers.map(csvCell).join(",")];
+    // 1R = average loss of the exported set, same convention used everywhere
+    // else in the app (dashboard R-multiple stat, R distribution chart).
+    var ru = rUnitOf(rows);
     rows.forEach(function (t) {
       var commission = Number(t.commission) || 0;
-      lines.push([t.date, t.time || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.mae === "" ? "" : t.mae, t.mfe === "" ? "" : t.mfe, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl + commission, commission, t.pnl, (t.tags || []).join(" "), t.note].map(csvCell).join(","));
+      var rMultiple = ru > 0 ? (t.pnl / ru).toFixed(2) : "";
+      lines.push([t.date, t.time || "", sessionOf(t.time) || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.mae === "" ? "" : t.mae, t.mfe === "" ? "" : t.mfe, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl + commission, commission, t.pnl, rMultiple, (t.tags || []).join(" "), t.note].map(csvCell).join(","));
     });
     var csv = "﻿" + lines.join("\r\n"); // BOM so Excel reads accents correctly
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -773,7 +777,11 @@
     var s = String(v || "").trim().toLowerCase();
     return /opc|option|call|put/.test(s) ? "option" : "future";
   }
-  function importDate(v) {
+  // `dateOrder` resolves a genuinely ambiguous D/M/Y-vs-M/D/Y date (both parts
+  // <=12, e.g. "03/04/2026"): "mdy" reads it month-first, anything else (incl.
+  // omitted) keeps the previous day-first default. Unambiguous dates (either
+  // part >12) are unaffected — there's only one valid reading either way.
+  function importDate(v, dateOrder) {
     var s = String(v || "").trim();
     var m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/); // ISO-ish YYYY-MM-DD
     if (m) return m[1] + "-" + pad(m[2]) + "-" + pad(m[3]);
@@ -783,16 +791,35 @@
       var day = a, mon = b;
       if (a > 12 && b <= 12) { day = a; mon = b; }        // clearly day-first
       else if (b > 12 && a <= 12) { day = b; mon = a; }    // clearly month-first
-      // else ambiguous → assume day-first (European brokers)
+      else if (dateOrder === "mdy") { day = b; mon = a; }  // ambiguous, file proven month-first
+      // else ambiguous → assume day-first (European brokers), same as before
       if (mon < 1 || mon > 12 || day < 1 || day > 31) return null;
       return m[3] + "-" + pad(mon) + "-" + pad(day);
     }
     return null;
   }
+  // Scans every date cell in an import for one unambiguous row (either part
+  // >12) to establish whether the file is D/M/Y or M/D/Y, so an ambiguous row
+  // elsewhere in the *same* file follows the file's real convention instead of
+  // silently defaulting to day-first on its own (e.g. turning "4/2/2026",
+  // April 2 in a US M/D/Y export, into February 4). Returns "mdy"/"dmy"/null
+  // (no evidence either way — falls back to the day-first default).
+  function detectDateOrder(rows, dateColIdx) {
+    if (dateColIdx == null || dateColIdx < 0) return null;
+    for (var i = 0; i < rows.length; i++) {
+      var s = String((rows[i] || [])[dateColIdx] || "").trim();
+      var m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+      if (!m) continue;
+      var a = +m[1], b = +m[2];
+      if (a > 12 && b <= 12) return "dmy";
+      if (b > 12 && a <= 12) return "mdy";
+    }
+    return null;
+  }
   // Build a DB row from a CSV record + column mapping. Returns {row} or {error}.
-  function buildImportRow(cells, map) {
+  function buildImportRow(cells, map, dateOrder) {
     function get(k) { var i = map[k]; return i != null && i >= 0 ? cells[i] : ""; }
-    var date = importDate(get("date"));
+    var date = importDate(get("date"), dateOrder);
     if (!date) return { error: "fecha inválida" };
     var symbol = String(get("symbol") || "").trim().toUpperCase();
     if (!symbol) return { error: "símbolo vacío" };
@@ -845,8 +872,9 @@
     var existingKeys = {};
     state.trades.forEach(function (t) { existingKeys[tradeDupKey(t)] = true; });
     var seenInFile = {};
+    var dateOrder = detectDateOrder(im.rows.slice(1), im.map.date);
     im.rows.slice(1).forEach(function (cells, n) {
-      var r = buildImportRow(cells, im.map);
+      var r = buildImportRow(cells, im.map, dateOrder);
       if (r.row) {
         var key = tradeDupKey(r.row);
         if (existingKeys[key] || seenInFile[key]) dupCount++;
@@ -1738,9 +1766,29 @@
       sidebar(), mainColumn(), detailDrawer());
   }
 
+  // Real total = each account's starting balance plus the net P&L booked
+  // against it (accountStats), not the static starting number alone — a
+  // trade closing today must move this figure. Accounts are summed only
+  // within the majority currency (mixing e.g. USD and EUR would fabricate
+  // a number that means nothing); the rest are flagged instead of guessed.
+  function acctBalanceInfo() {
+    var accs = state.accounts;
+    if (!accs.length) return { total: null, currency: null, excluded: 0 };
+    var sums = {}, counts = {};
+    accs.forEach(function (a) {
+      var c = a.currency || "USD";
+      var live = (Number(a.balance) || 0) + accountStats(a.id).net;
+      sums[c] = (sums[c] || 0) + live;
+      counts[c] = (counts[c] || 0) + 1;
+    });
+    var currencies = Object.keys(sums);
+    var primary = currencies.reduce(function (best, c) { return counts[c] > counts[best] ? c : best; }, currencies[0]);
+    return { total: sums[primary], currency: primary, excluded: accs.length - counts[primary] };
+  }
   function sidebar() {
     var m = metrics();
-    var acctBal = state.accounts.length ? state.accounts.reduce(function (a, acc) { return a + (Number(acc.balance) || 0); }, 0) : m.net;
+    var balInfo = acctBalanceInfo();
+    var acctBal = balInfo.total != null ? balInfo.total : m.net;
     var today = todayISO();
     var todayPnl = state.trades.filter(function (t) { return t.date === today; }).reduce(function (a, t) { return a + t.pnl; }, 0);
     var navBase = "display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:9px 11px;border-radius:9px;font-size:13.5px;font-weight:500;transition:background .12s;";
@@ -1773,8 +1821,9 @@
         navItem("settings", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', "Ajustes")),
       h("div", { class: "side-foot", style: "margin-top:auto;display:flex;flex-direction:column;gap:12px;" },
         h("div", { style: "border:1px solid #ECE7DD;border-radius:12px;padding:14px;background:#FBFAF7;" },
-          h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, state.accounts.length ? "Balance total" : "P&L acumulado"),
+          h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, state.accounts.length ? ("Balance total" + (balInfo.currency && balInfo.currency !== "USD" ? " (" + balInfo.currency + ")" : "")) : "P&L acumulado"),
           h("div", { style: "font-family:'Geist Mono',monospace;font-size:21px;font-weight:600;margin-top:6px;letter-spacing:-0.5px;" }, money(acctBal)),
+          balInfo.excluded ? h("div", { style: "font-size:10.5px;color:#A39E94;margin-top:2px;" }, balInfo.excluded + " cuenta(s) en otra moneda no incluida(s)") : null,
           h("div", { style: "display:flex;align-items:center;gap:6px;margin-top:8px;" },
             h("span", { style: "font-size:11px;color:#807B72;" }, "Hoy"),
             h("span", { style: "font-family:Geist Mono,monospace;font-size:12.5px;font-weight:600;" + pnlColor(todayPnl) }, signed(todayPnl)))),
