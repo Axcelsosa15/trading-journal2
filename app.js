@@ -225,9 +225,11 @@
     ZC: 50, ZW: 50, ZS: 50
   };
   function PV(t) {
-    return t.type === "option" ? 100 : (FUTURES_PV[(t.symbol || "").toUpperCase()] || 1);
+    return t.type === "option" ? 100 : (FUTURES_PV[String(t.symbol || "").trim().toUpperCase()] || 1);
   }
-  function knownFuturesSymbol(sym) { return !!FUTURES_PV[(sym || "").toUpperCase()]; }
+  // A stray leading/trailing space (common when typing or pasting a symbol) must
+  // not fall through to the $1/point fallback in PV() above — trim before lookup.
+  function knownFuturesSymbol(sym) { return !!FUTURES_PV[String(sym || "").trim().toUpperCase()]; }
   function pnlOf(t) {
     var dir = t.side === "long" ? 1 : -1;
     return Math.round((Number(t.exit) - Number(t.entry)) * PV(t) * Number(t.contracts) * dir);
@@ -535,11 +537,11 @@
   }
   function exportCSV(rows) {
     if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
-    var headers = ["Fecha", "Hora UTC", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "MAE", "MFE", "Setup", "Emoción", "Valoración", "Cuenta", "PnL bruto", "Comisión", "PnL neto", "Etiquetas", "Notas"];
+    var headers = ["Fecha", "Hora UTC", "Sesión", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "MAE", "MFE", "Setup", "Emoción", "Valoración", "Cuenta", "PnL bruto", "Comisión", "PnL neto", "Etiquetas", "Notas"];
     var lines = [headers.map(csvCell).join(",")];
     rows.forEach(function (t) {
       var commission = Number(t.commission) || 0;
-      lines.push([t.date, t.time || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.mae === "" ? "" : t.mae, t.mfe === "" ? "" : t.mfe, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl + commission, commission, t.pnl, (t.tags || []).join(" "), t.note].map(csvCell).join(","));
+      lines.push([t.date, t.time || "", sessionOf(t.time) || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.mae === "" ? "" : t.mae, t.mfe === "" ? "" : t.mfe, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl + commission, commission, t.pnl, (t.tags || []).join(" "), t.note].map(csvCell).join(","));
     });
     var csv = "﻿" + lines.join("\r\n"); // BOM so Excel reads accents correctly
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -1048,14 +1050,15 @@
     if (!isFinite(Number(d.entry)) || !isFinite(Number(d.exit)) || !commissionValid(d)) return;
     state.savingTrade = true; renderModal();
     try {
+      var symbol = String(d.symbol || "").trim().toUpperCase();
       var commission = d.commission === "" || d.commission == null ? 0 : Number(d.commission);
-      var pnl = netPnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) }, commission);
+      var pnl = netPnlOf({ symbol: symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) }, commission);
       // Upload a freshly attached screenshot first (online only); otherwise keep
       // whatever path the trade already had.
       var oldShotPath = d.screenshot_path || null;
       var shotPath = oldShotPath;
       if (d._imageFile) { var p = await uploadScreenshot(d._imageFile); if (p) shotPath = p; }
-      var row = { date: d.date, time: d.time || null, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, commission: commission, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
+      var row = { date: d.date, time: d.time || null, symbol: symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, commission: commission, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
       if (state.editId) {
         if (!isOnline()) { window.alert("Necesitas conexión para editar una operación. Las operaciones nuevas sí se guardan sin conexión."); return; }
         var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
@@ -1740,7 +1743,12 @@
 
   function sidebar() {
     var m = metrics();
-    var acctBal = state.accounts.length ? state.accounts.reduce(function (a, acc) { return a + (Number(acc.balance) || 0); }, 0) : m.net;
+    // Equity, not the static starting balance: each account's configured balance
+    // plus its own realized net P&L (accountStats reads unscoped state.trades, so
+    // this total stays correct even while the header is scoped to one account).
+    var acctBal = state.accounts.length
+      ? state.accounts.reduce(function (a, acc) { return a + (Number(acc.balance) || 0) + accountStats(acc.id).net; }, 0)
+      : m.net;
     var today = todayISO();
     var todayPnl = state.trades.filter(function (t) { return t.date === today; }).reduce(function (a, t) { return a + t.pnl; }, 0);
     var navBase = "display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:9px 11px;border-radius:9px;font-size:13.5px;font-weight:500;transition:background .12s;";
