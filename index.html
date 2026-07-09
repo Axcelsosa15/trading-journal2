@@ -479,6 +479,23 @@
         <label class="f"><span>Riesgo ($)</span><input type="text" id="f-riesgo" inputmode="decimal" placeholder="Lo que arriesgaste"></label>
         <label class="f"><span>P&amp;L ($) *</span><input type="text" id="f-pnl" inputmode="decimal" placeholder="+150 o -80" required></label>
         <label class="f"><span>Comisión ($)</span><input type="text" id="f-comision" inputmode="decimal"></label>
+        <label class="f"><span>MFE (puntos)</span><input type="text" id="f-mfe" inputmode="decimal" placeholder="Máx. a favor"></label>
+        <label class="f"><span>MAE (puntos)</span><input type="text" id="f-mae" inputmode="decimal" placeholder="Máx. en contra"></label>
+        <label class="f"><span>Estado VWAP</span>
+          <select id="f-vwap">
+            <option value=""></option>
+            <option>Encima</option><option>Debajo</option><option>Reclaim</option><option>Reject</option>
+          </select>
+        </label>
+        <label class="f"><span>Contexto de entrada</span>
+          <select id="f-contexto">
+            <option value=""></option>
+            <option>Continuación</option><option>Reversión</option><option>Breakout</option>
+          </select>
+        </label>
+        <label class="f"><span>Conflicto misma vela</span>
+          <select id="f-conflict"><option value=""></option><option>Sí</option><option>No</option></select>
+        </label>
         <label class="f"><span>Estado emocional</span>
           <select id="f-emocion">
             <option value=""></option>
@@ -684,6 +701,11 @@
       risk: numOrNull(t.risk),
       pnl: Number(t.pnl) || 0,
       fees: numOrNull(t.fees),
+      mfe: numOrNull(t.mfe),
+      mae: numOrNull(t.mae),
+      vwap: String(t.vwap || ""),
+      context: String(t.context || ""),
+      conflict: t.conflict === "Sí" || t.conflict === "No" ? t.conflict : "",
       emotion: String(t.emotion || ""),
       plan: String(t.plan || ""),
       tags: Array.isArray(t.tags) ? t.tags.map(function (x) { return String(x); }) : [],
@@ -779,7 +801,8 @@
   function computeStats(trades) {
     var s = {
       n: trades.length, net: 0, grossW: 0, grossL: 0, wins: 0, losses: 0, be: 0,
-      best: null, worst: null, rSum: 0, rN: 0, maxDD: 0, streak: 0, streakType: ""
+      best: null, worst: null, rSum: 0, rN: 0, maxDD: 0, streak: 0, streakType: "",
+      maeSum: 0, maeN: 0, mfeSum: 0, mfeN: 0, effSum: 0, effN: 0, conflictN: 0, conflictTagged: 0
     };
     var eq = 0, peak = 0;
     trades.forEach(function (t) {
@@ -789,6 +812,16 @@
       if (s.best === null || p > s.best) s.best = p;
       if (s.worst === null || p < s.worst) s.worst = p;
       if (t.risk > 0) { s.rSum += p / t.risk; s.rN++; }
+      if (t.mae != null) { s.maeSum += Math.abs(t.mae); s.maeN++; }
+      if (t.mfe != null) { s.mfeSum += Math.abs(t.mfe); s.mfeN++; }
+      if (t.mfe != null && Math.abs(t.mfe) > 0 && t.entry != null && t.exit != null) {
+        var captured = Math.abs(t.exit - t.entry);
+        s.effSum += Math.min(1, captured / Math.abs(t.mfe)); s.effN++;
+      }
+      if (t.conflict === "Sí" || t.conflict === "No") {
+        s.conflictTagged++;
+        if (t.conflict === "Sí") s.conflictN++;
+      }
       eq += p;
       if (eq > peak) peak = eq;
       if (peak - eq > s.maxDD) s.maxDD = peak - eq;
@@ -807,6 +840,10 @@
     s.avgW = s.wins ? s.grossW / s.wins : 0;
     s.avgL = s.losses ? s.grossL / s.losses : 0;
     s.avgR = s.rN ? s.rSum / s.rN : null;
+    s.avgMAE = s.maeN ? s.maeSum / s.maeN : null;
+    s.avgMFE = s.mfeN ? s.mfeSum / s.mfeN : null;
+    s.efficiency = s.effN ? s.effSum / s.effN * 100 : null;
+    s.conflictRate = s.conflictTagged ? s.conflictN / s.conflictTagged * 100 : null;
     return s;
   }
 
@@ -882,6 +919,12 @@
       stat("Días verdes", dayKeys.length ? Math.round(greenDays / dayKeys.length * 100) + "%" : "—", greenDays + " de " + dayKeys.length + " días operados") +
       stat("P&L diario", '<span class="' + pnlClass(avgDaily) + '">' + money(avgDaily, true) + "</span>", "promedio por día operado") +
       stat("Ops por día", opsDay.toFixed(1), "ritmo de operativa") +
+      stat("MFE promedio", s.avgMFE == null ? "—" : s.avgMFE.toFixed(1) + " pts", s.avgMFE == null ? "añade MFE en tus trades" : "máx. a favor · " + s.mfeN + " trades") +
+      stat("MAE promedio", s.avgMAE == null ? "—" : s.avgMAE.toFixed(1) + " pts", s.avgMAE == null ? "añade MAE en tus trades" : "máx. en contra · " + s.maeN + " trades") +
+      stat("Eficiencia captura", s.efficiency == null ? "—" : s.efficiency.toFixed(0) + "%", s.efficiency == null ? "necesita MFE + entrada/salida" : "del recorrido a favor") +
+      stat("Conflicto misma vela",
+        s.conflictRate == null ? "—" : '<span class="' + (s.conflictRate >= 10 ? "neg" : "") + '">' + s.conflictRate.toFixed(0) + "%</span>",
+        s.conflictRate == null ? "marca “Conflicto misma vela”" : (s.conflictRate >= 10 ? "⚠ backtest necesita tick data" : s.conflictN + " de " + s.conflictTagged + " marcadas")) +
       "</div>";
 
     html += '<div class="card chart-card" style="margin-bottom:14px"><h3>Curva de capital</h3>' +
@@ -903,9 +946,14 @@
       chartCard("Distribución de R", "Cuántas operaciones caen en cada múltiplo de riesgo", "rh-chart") +
       "</div>";
 
-    html += '<div class="row-2">' +
+    html += '<div class="row-2" style="margin-bottom:14px">' +
       '<div class="card chart-card"><h3>Long vs Short</h3><p class="chart-sub">Rendimiento por dirección</p><div id="dir-table"></div></div>' +
       '<div class="card chart-card"><h3>Disciplina</h3><p class="chart-sub">Resultado según “¿Seguiste tu plan?”</p><div id="plan-table"></div></div>' +
+      "</div>";
+
+    html += '<div class="row-2">' +
+      '<div class="card chart-card"><h3>Contexto de entrada</h3><p class="chart-sub">¿Continuación, reversión o breakout?</p><div id="ctx-table"></div></div>' +
+      '<div class="card chart-card"><h3>Estado VWAP</h3><p class="chart-sub">Rendimiento según tu relación con el VWAP</p><div id="vwap-table"></div></div>' +
       "</div>";
 
     body.innerHTML = html;
@@ -918,6 +966,8 @@
     drawRHist(trades);
     drawDirTable(trades);
     drawPlanTable(trades);
+    drawContextTable(trades);
+    drawVwapTable(trades);
   }
 
   function stat(k, v, sub) {
@@ -1136,6 +1186,30 @@
     breakdownTable("plan-table", pairs, "¿Plan seguido?");
   }
 
+  function drawContextTable(trades) {
+    var tagged = trades.filter(function (t) { return t.context; });
+    if (!tagged.length) {
+      $("ctx-table").innerHTML = '<p class="note">Marca el <strong>contexto de entrada</strong> (continuación / reversión / breakout) en tus operaciones para comparar cuál te da mejor expectativa.</p>';
+      return;
+    }
+    var by = groupBy(tagged, function (t) { return t.context; });
+    var pairs = ["Continuación", "Reversión", "Breakout"].filter(function (k) { return by[k]; })
+      .map(function (k) { return { k: k, s: computeStats(by[k]) }; });
+    breakdownTable("ctx-table", pairs, "Contexto");
+  }
+
+  function drawVwapTable(trades) {
+    var tagged = trades.filter(function (t) { return t.vwap; });
+    if (!tagged.length) {
+      $("vwap-table").innerHTML = '<p class="note">Marca el <strong>estado VWAP</strong> (encima / debajo / reclaim / reject) en tus operaciones para ver si tu edge depende de la relación con el VWAP.</p>';
+      return;
+    }
+    var by = groupBy(tagged, function (t) { return t.vwap; });
+    var pairs = ["Encima", "Debajo", "Reclaim", "Reject"].filter(function (k) { return by[k]; })
+      .map(function (k) { return { k: k, s: computeStats(by[k]) }; });
+    breakdownTable("vwap-table", pairs, "Estado VWAP");
+  }
+
   /* ── Gráfico de barras genérico ──────────────────────── */
   function barTip(it) {
     var rows = [
@@ -1325,8 +1399,11 @@
       setup: keepContext ? $("f-setup").value : "",
       sesion: keepContext ? $("f-sesion").value : ""
     };
-    ["f-hora", "f-tamano", "f-entrada", "f-salida", "f-stop", "f-riesgo", "f-pnl", "f-comision", "f-tags", "f-notas"].forEach(function (id) { $(id).value = ""; });
+    ["f-hora", "f-tamano", "f-entrada", "f-salida", "f-stop", "f-riesgo", "f-pnl", "f-comision", "f-mfe", "f-mae", "f-tags", "f-notas"].forEach(function (id) { $(id).value = ""; });
     $("f-dir").value = "long";
+    $("f-vwap").value = "";
+    $("f-contexto").value = "";
+    $("f-conflict").value = "";
     $("f-emocion").value = "";
     $("f-plan").value = "";
     $("f-fecha").value = keep.fecha;
@@ -1354,6 +1431,11 @@
     $("f-riesgo").value = t.risk != null ? t.risk : "";
     $("f-pnl").value = t.pnl != null ? t.pnl : "";
     $("f-comision").value = t.fees != null ? t.fees : "";
+    $("f-mfe").value = t.mfe != null ? t.mfe : "";
+    $("f-mae").value = t.mae != null ? t.mae : "";
+    $("f-vwap").value = t.vwap || "";
+    $("f-contexto").value = t.context || "";
+    $("f-conflict").value = t.conflict || "";
     $("f-emocion").value = t.emotion || "";
     $("f-plan").value = t.plan || "";
     $("f-tags").value = (t.tags || []).join(", ");
@@ -1401,6 +1483,11 @@
       risk: parseNum($("f-riesgo").value),
       pnl: pnl,
       fees: parseNum($("f-comision").value),
+      mfe: parseNum($("f-mfe").value),
+      mae: parseNum($("f-mae").value),
+      vwap: $("f-vwap").value,
+      context: $("f-contexto").value,
+      conflict: $("f-conflict").value,
       emotion: $("f-emocion").value,
       plan: $("f-plan").value,
       tags: $("f-tags").value.split(",").map(function (s) { return s.trim(); }).filter(Boolean),
@@ -1648,7 +1735,7 @@
   });
 
   $("export-csv").addEventListener("click", function () {
-    var cols = ["fecha", "hora", "simbolo", "direccion", "setup", "sesion", "tamano", "entrada", "salida", "stop", "riesgo", "pnl", "r", "comision", "emocion", "plan", "etiquetas", "notas"];
+    var cols = ["fecha", "hora", "simbolo", "direccion", "setup", "sesion", "tamano", "entrada", "salida", "stop", "riesgo", "pnl", "r", "comision", "mfe", "mae", "vwap", "contexto", "conflicto_misma_vela", "emocion", "plan", "etiquetas", "notas"];
     function cell(v) {
       var s = v == null ? "" : String(v);
       return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
@@ -1656,7 +1743,7 @@
     var lines = [cols.join(",")];
     sortedTrades().forEach(function (t) {
       var r = (t.risk > 0 && t.pnl != null) ? (t.pnl / t.risk).toFixed(3) : "";
-      lines.push([t.date, t.time, t.symbol, t.dir, t.setup, t.session, t.size, t.entry, t.exit, t.sl, t.risk, t.pnl, r, t.fees, t.emotion, t.plan, (t.tags || []).join(" "), t.notes].map(cell).join(","));
+      lines.push([t.date, t.time, t.symbol, t.dir, t.setup, t.session, t.size, t.entry, t.exit, t.sl, t.risk, t.pnl, r, t.fees, t.mfe, t.mae, t.vwap, t.context, t.conflict, t.emotion, t.plan, (t.tags || []).join(" "), t.notes].map(cell).join(","));
     });
     download("operaciones-" + todayISO() + ".csv", "﻿" + lines.join("\n"), "text/csv;charset=utf-8");
     toast("CSV exportado");
@@ -1674,8 +1761,6 @@
   function oldTradeToNew(r) {
     var extras = [];
     if (r.rating) extras.push("Rating " + r.rating + "/5");
-    if (finNum(r.mae) != null) extras.push("MAE " + r.mae);
-    if (finNum(r.mfe) != null) extras.push("MFE " + r.mfe);
     var tags = Array.isArray(r.tags) ? r.tags.slice() : [];
     if (r.type && tags.indexOf(r.type) === -1) tags.push(r.type);
     if (tags.indexOf("journal-viejo") === -1) tags.push("journal-viejo");
@@ -1694,6 +1779,11 @@
       risk: null,
       pnl: Number(r.pnl) || 0,
       fees: null,
+      mfe: finNum(r.mfe),
+      mae: finNum(r.mae),
+      vwap: "",
+      context: "",
+      conflict: "",
       emotion: r.emotion || "",
       plan: "",
       tags: tags,
@@ -1864,8 +1954,12 @@
   /* ── Datos de ejemplo ────────────────────────────────── */
   function loadDemo() {
     var syms = ["EURUSD", "XAUUSD", "NAS100", "BTCUSD"];
+    var bases = { EURUSD: 1.085, XAUUSD: 2350, NAS100: 18500, BTCUSD: 62000 };
+    var ptVal = { EURUSD: 1, XAUUSD: 1, NAS100: 5, BTCUSD: 10 };
     var setups = ["Ruptura", "Pullback", "Reversión"];
     var sessions = ["Londres", "Nueva York", "Asia"];
+    var contexts = ["Continuación", "Reversión", "Breakout"];
+    var vwaps = ["Encima", "Debajo", "Reclaim", "Reject"];
     var seed = 7;
     function rnd() { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
     var out = [];
@@ -1882,16 +1976,29 @@
       var risk = 100;
       var pnl = win ? Math.round((80 + rnd() * 220)) : -Math.round((40 + rnd() * 110));
       var iso = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+      var sym = syms[Math.floor(rnd() * syms.length)];
+      var dir = rnd() < 0.5 ? "long" : "short";
+      var pv = ptVal[sym];
+      var captured = Math.abs(pnl) / pv;                 // puntos capturados (|salida-entrada|)
+      var entry = +(bases[sym] * (1 + (rnd() - 0.5) * 0.01)).toFixed(sym === "EURUSD" ? 4 : 2);
+      var signed = (dir === "long" ? 1 : -1) * (win ? 1 : -1);
+      var exit = +(entry + signed * captured).toFixed(sym === "EURUSD" ? 4 : 2);
+      var mfe = +(captured * (win ? 1 + rnd() * 0.5 : rnd() * 0.6)).toFixed(2);
+      var mae = +(captured * (win ? rnd() * 0.4 : 1 + rnd() * 0.4)).toFixed(2);
       out.push({
         id: uid() + "-" + count,
         date: iso,
         time: (8 + Math.floor(rnd() * 9)) + ":" + (rnd() < 0.5 ? "00" : "30"),
-        symbol: syms[Math.floor(rnd() * syms.length)],
-        dir: rnd() < 0.5 ? "long" : "short",
+        symbol: sym,
+        dir: dir,
         setup: setups[Math.floor(rnd() * setups.length)],
         session: sessions[Math.floor(rnd() * sessions.length)],
-        size: null, entry: null, exit: null, sl: null,
+        size: null, entry: entry, exit: exit, sl: null,
         risk: risk, pnl: pnl, fees: null,
+        mfe: mfe, mae: mae,
+        vwap: win ? (rnd() < 0.6 ? "Encima" : "Reclaim") : vwaps[Math.floor(rnd() * vwaps.length)],
+        context: contexts[Math.floor(rnd() * contexts.length)],
+        conflict: rnd() < 0.08 ? "Sí" : "No",
         emotion: win ? "Disciplinado" : (rnd() < 0.3 ? "Ansioso" : "Neutral"),
         plan: rnd() < 0.8 ? "Sí" : "Parcial",
         tags: ["ejemplo"],

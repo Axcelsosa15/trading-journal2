@@ -18,9 +18,11 @@ try {
   console.log("Demo trades persisted (>=20):", state.trades.length >= 20, "(" + state.trades.length + ")");
   console.log("Hero P&L renders:", !!d.querySelector(".hero-v") && /\$/.test(d.querySelector(".hero-v").textContent));
   console.log("3 hero KPIs:", d.querySelectorAll(".hkpi").length === 3);
-  console.log("8 stat tiles:", d.querySelectorAll(".stat").length === 8);
+  console.log("12 stat tiles:", d.querySelectorAll(".stat").length === 12);
+  const tileText = [...d.querySelectorAll(".stat .k")].map(k => k.textContent);
+  console.log("Scalping KPIs present:", ["MFE promedio", "MAE promedio", "Eficiencia captura", "Conflicto misma vela"].every(k => tileText.includes(k)));
   const svgs = d.querySelectorAll("#dash-body .chart-box svg").length;
   console.log("Dashboard charts render (>=5 svg):", svgs >= 5, "(" + svgs + ")");
-  console.log("Breakdown tables render:", !!d.querySelector("#setup-table table") && !!d.querySelector("#dir-table table") && !!d.querySelector("#plan-table table"));
+  console.log("Breakdown tables render:", !!d.querySelector("#setup-table table") && !!d.querySelector("#dir-table table") && !!d.querySelector("#plan-table table") && !!d.querySelector("#ctx-table table") && !!d.querySelector("#vwap-table table"));
   console.log("BOOT SMOKE OK");
 } catch (e) { console.log("ERR", e.message, e.stack); }

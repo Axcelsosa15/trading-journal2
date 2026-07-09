@@ -24,7 +24,8 @@ try {
   const t1 = st.trades.find(t => t.id === "old-1");
   console.log("side->dir + symbol upper:", t1.dir === "long" && t1.symbol === "NQ");
   console.log("contracts->size:", t1.size === 2);
-  console.log("rating/MAE/MFE folded into notes:", /Rating 4\/5/.test(t1.notes) && /MAE -12/.test(t1.notes));
+  console.log("rating folded into notes:", /Rating 4\/5/.test(t1.notes));
+  console.log("MAE/MFE migrated to fields:", t1.mae === -12 && t1.mfe === 45);
   console.log("type + marker tags:", t1.tags.includes("Futuros") && t1.tags.includes("journal-viejo"));
   console.log("old diary in system notes:", /Paciencia paga\./.test(st.system.notas));
   // Second boot with same cache: no duplicates
