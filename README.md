@@ -83,7 +83,7 @@ headless smoke tests that boot the app with a mocked Supabase client.
 ```sh
 npm install          # installs jsdom
 npm run check        # node --check on app.js / sw.js
-npm test             # runs tests/*.test.js (8 suites)
+npm test             # runs tests/*.test.js
 ```
 
 CI (`.github/workflows/ci.yml`) runs these on every PR and push to `main`.

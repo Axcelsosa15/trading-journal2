@@ -225,9 +225,11 @@
     ZC: 50, ZW: 50, ZS: 50
   };
   function PV(t) {
-    return t.type === "option" ? 100 : (FUTURES_PV[(t.symbol || "").toUpperCase()] || 1);
+    return t.type === "option" ? 100 : (FUTURES_PV[String(t.symbol || "").trim().toUpperCase()] || 1);
   }
-  function knownFuturesSymbol(sym) { return !!FUTURES_PV[(sym || "").toUpperCase()]; }
+  // A stray leading/trailing space (common when typing or pasting a symbol) must
+  // not fall through to the $1/point fallback in PV() above — trim before lookup.
+  function knownFuturesSymbol(sym) { return !!FUTURES_PV[String(sym || "").trim().toUpperCase()]; }
   function pnlOf(t) {
     var dir = t.side === "long" ? 1 : -1;
     return Math.round((Number(t.exit) - Number(t.entry)) * PV(t) * Number(t.contracts) * dir);
@@ -838,11 +840,17 @@
     // only computed-from-price P&L subtracts the imported commission.
     var pnl = map.pnl >= 0 && !isNaN(importNum(get("pnl"))) ? Math.round(importNum(get("pnl")))
       : netPnlOf({ symbol: symbol, type: type, side: side, contracts: contracts, entry: entry, exit: exit }, commission);
-    var acctId = null;
+    var acctId = null, acctAmbiguous = false;
     if (map.account >= 0) {
       var an = String(get("account") || "").trim().toLowerCase();
-      var match = state.accounts.find(function (a) { return a.name.toLowerCase() === an; });
-      acctId = match ? match.id : null;
+      if (an) {
+        // Prop-firm traders often have several accounts with the identical name
+        // (e.g. multiple evaluation accounts) — picking the first match by name
+        // would silently misattribute trades, so leave it unassigned instead.
+        var matches = state.accounts.filter(function (a) { return a.name.toLowerCase() === an; });
+        if (matches.length === 1) acctId = matches[0].id;
+        else if (matches.length > 1) acctAmbiguous = true;
+      }
     }
     var timeVal = map.time >= 0 ? String(get("time") || "").trim() : "";
     return {
@@ -854,6 +862,7 @@
         rating: rating, note: map.note >= 0 ? String(get("note") || "") : "",
         pnl: pnl, commission: commission, account_id: acctId, tags: [], mae: null, mfe: null,
       },
+      acctAmbiguous: acctAmbiguous,
     };
   }
   // Identity key for duplicate detection: same date/symbol/side/size/entry/exit
@@ -867,8 +876,8 @@
   // repeated within the same CSV).
   function importPreview() {
     var im = state.import;
-    if (!im || !im.rows.length) return { valid: [], invalid: 0, errors: [], dupCount: 0 };
-    var valid = [], invalid = 0, errors = [], dupCount = 0;
+    if (!im || !im.rows.length) return { valid: [], invalid: 0, errors: [], dupCount: 0, acctAmbiguous: 0 };
+    var valid = [], invalid = 0, errors = [], dupCount = 0, acctAmbiguous = 0;
     var existingKeys = {};
     state.trades.forEach(function (t) { existingKeys[tradeDupKey(t)] = true; });
     var seenInFile = {};
@@ -879,10 +888,11 @@
         var key = tradeDupKey(r.row);
         if (existingKeys[key] || seenInFile[key]) dupCount++;
         seenInFile[key] = true;
+        if (r.acctAmbiguous) acctAmbiguous++;
         valid.push(r.row);
       } else { invalid++; if (errors.length < 5) errors.push("Fila " + (n + 2) + ": " + r.error); }
     });
-    return { valid: valid, invalid: invalid, errors: errors, dupCount: dupCount };
+    return { valid: valid, invalid: invalid, errors: errors, dupCount: dupCount, acctAmbiguous: acctAmbiguous };
   }
   async function runImport() {
     var prev = importPreview();
@@ -907,16 +917,17 @@
     closeImport();
     render();
   }
-  function openImport() { state.showImport = true; state.import = { rows: [], headers: [], map: {}, fileName: "", error: "", busy: false }; renderModal(); }
+  function openImport() { state.showImport = true; state.import = { rows: [], headers: [], map: {}, fileName: "", error: "", busy: false, dateFormat: "auto" }; renderModal(); }
   function closeImport() { state.showImport = false; state.import = null; renderModal(); }
   function handleImportFile(file) {
     if (!file) return;
+    var keepDateFormat = (state.import && state.import.dateFormat) || "auto";
     var reader = new FileReader();
     reader.onload = function () {
       try {
         var rows = parseCSV(reader.result);
         if (rows.length < 2) { state.import = Object.assign(state.import || {}, { error: "El archivo no tiene filas de datos.", rows: [], headers: [] }); renderModal(); return; }
-        state.import = { rows: rows, headers: rows[0], map: guessMapping(rows[0]), fileName: file.name, error: "", busy: false };
+        state.import = { rows: rows, headers: rows[0], map: guessMapping(rows[0]), fileName: file.name, error: "", busy: false, dateFormat: keepDateFormat };
       } catch (e) { state.import = Object.assign(state.import || {}, { error: "No se pudo leer el archivo.", rows: [], headers: [] }); }
       renderModal();
     };
@@ -1074,16 +1085,19 @@
     var d = state.draft;
     if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
     if (!isFinite(Number(d.entry)) || !isFinite(Number(d.exit)) || !commissionValid(d)) return;
+    if (!d.date || d.date > todayISO()) return;
     state.savingTrade = true; renderModal();
     try {
+      var symbol = d.symbol.trim().toUpperCase();
       var commission = d.commission === "" || d.commission == null ? 0 : Number(d.commission);
-      var pnl = netPnlOf({ symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) }, commission);
+      var pnl = netPnlOf({ symbol: symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) }, commission);
       // Upload a freshly attached screenshot first (online only); otherwise keep
       // whatever path the trade already had.
       var oldShotPath = d.screenshot_path || null;
       var shotPath = oldShotPath;
-      if (d._imageFile) { var p = await uploadScreenshot(d._imageFile); if (p) shotPath = p; }
-      var row = { date: d.date, time: d.time || null, symbol: d.symbol.toUpperCase(), type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, commission: commission, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
+      var shotUploadFailed = false;
+      if (d._imageFile) { var p = await uploadScreenshot(d._imageFile); if (p) shotPath = p; else shotUploadFailed = true; }
+      var row = { date: d.date, time: d.time || null, symbol: symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, commission: commission, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
       if (state.editId) {
         if (!isOnline()) { window.alert("Necesitas conexión para editar una operación. Las operaciones nuevas sí se guardan sin conexión."); return; }
         var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
@@ -1111,6 +1125,7 @@
       }
       saveCache();
       closeAdd();
+      if (shotUploadFailed) window.alert("La operación se guardó, pero la captura de pantalla no se pudo subir (formato no soportado, archivo muy grande, o conexión inestable). Puedes intentar adjuntarla de nuevo editando la operación.");
     } finally {
       state.savingTrade = false;
       render();
@@ -3147,7 +3162,7 @@
     var pnl = valid ? netPnlOf(t, commission) : 0;
     return { valid: valid, pnl: pnl, gross: gross, commission: commission };
   }
-  function isSaveValid() { var d = state.draft; return d.symbol && d.entry !== "" && d.exit !== "" && Number(d.contracts) > 0 && commissionValid(d); }
+  function isSaveValid() { var d = state.draft; return d.symbol && d.entry !== "" && d.exit !== "" && Number(d.contracts) > 0 && commissionValid(d) && !!d.date && d.date <= todayISO(); }
 
   function modalFrame(title, onClose, bodyChildren, footerChildren, width) {
     var modal = h("div", { class: "dc-modal", style: "position:relative;width:" + (width || 540) + "px;max-width:100%;max-height:92vh;overflow-y:auto;background:#fff;border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,.22);" },
@@ -3229,10 +3244,20 @@
           h("span", { style: "font-size:12.5px;font-weight:600;color:#54514A;" }, f.label, f.req ? h("span", { style: "color:#D6483B;margin-left:4px;" }, "*") : null), sel);
       });
       body.push(h("div", { style: "display:flex;flex-direction:column;gap:9px;border-top:1px solid #ECE7DD;padding-top:14px;" }, mapRows));
+      if (im.map.date >= 0) {
+        var dfSel = h("select", { style: selStyle, onChange: function (e) { state.import.dateFormat = e.target.value; renderModal(); } },
+          [["auto", "Detectar automáticamente"], ["dmy", "Día/Mes/Año (DD/MM/AAAA)"], ["mdy", "Mes/Día/Año (MM/DD/AAAA), típico en brokers de EE. UU."]]
+            .map(function (o) { return h("option", { value: o[0] }, o[1]); }));
+        dfSel.value = im.dateFormat || "auto";
+        body.push(h("div", { style: "display:grid;grid-template-columns:130px 1fr;gap:10px;align-items:center;" },
+          h("span", { style: "font-size:12.5px;font-weight:600;color:#54514A;" }, "Formato de fecha"), dfSel));
+        body.push(h("div", { style: "font-size:11.5px;color:#A39E94;margin-top:-4px;" }, "Solo afecta fechas ambiguas (ambos números ≤12, ej. 03/04/2026); el resto se detecta sin duda."));
+      }
       body.push(h("div", { style: "background:#FBFAF7;border:1px solid #ECE7DD;border-radius:10px;padding:12px 14px;font-size:13px;" },
         h("div", { style: "font-weight:600;" + (prev.valid.length ? "color:#16915B;" : "color:#A39E94;") }, prev.valid.length + " operación(es) lista(s) para importar"),
         prev.invalid ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.invalid + " fila(s) con error se omitirán") : null,
         prev.dupCount ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.dupCount + " fila(s) parecen duplicadas (misma fecha, símbolo, dirección, contratos, entrada y salida) — se importarán igual; revísalas antes de confirmar.") : null,
+        prev.acctAmbiguous ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.acctAmbiguous + " fila(s) con nombre de cuenta que coincide con más de una cuenta tuya — se importarán sin cuenta asignada; asígnalas manualmente después.") : null,
         prev.errors.length ? h("div", { style: "margin-top:6px;color:#A39E94;font-size:12px;font-family:'Geist Mono',monospace;white-space:pre-line;" }, prev.errors.join("\n")) : null));
     }
     var canImport = !im.busy && prev && prev.valid.length > 0;
@@ -3273,7 +3298,7 @@
     var body = [
       h("div", { style: "display:grid;grid-template-columns:1.2fr 1fr 0.9fr;gap:14px;" },
         field("Símbolo", h("div", null, fieldInput(d, "symbol", { placeholder: "MES, NQ, SPY…", style: inMono + "text-transform:uppercase;", onInput: function (e) { d.symbol = e.target.value; refresh(); } }), pvWarning)),
-        field("Fecha", fieldInput(d, "date", { type: "date", style: inMono })),
+        field("Fecha", fieldInput(d, "date", { type: "date", max: todayISO(), style: inMono })),
         field("Hora UTC (opcional)", fieldInput(d, "time", { type: "time", style: inMono }))),
       h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
         field("Instrumento", fieldSelect(d, "type", [["future", "Futuro"], ["option", "Opción"]], refresh)),
