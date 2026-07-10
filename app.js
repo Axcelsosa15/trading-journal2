@@ -374,10 +374,11 @@
     var r = state.settings.rules;
     var maxT = ruleNum(r.maxTradesPerDay), maxD = ruleNum(r.maxDailyLoss), maxW = ruleNum(r.maxWeeklyLoss);
     var today = todayISO(), wkStart = weekStartISO();
-    var todays = state.trades.filter(function (t) { return t.date === today; });
+    var ts = scopedTrades();
+    var todays = ts.filter(function (t) { return t.date === today; });
     var tradesToday = todays.length;
     var pnlToday = todays.reduce(function (a, t) { return a + t.pnl; }, 0);
-    var pnlWeek = state.trades.filter(function (t) { return t.date >= wkStart; }).reduce(function (a, t) { return a + t.pnl; }, 0);
+    var pnlWeek = ts.filter(function (t) { return t.date >= wkStart; }).reduce(function (a, t) { return a + t.pnl; }, 0);
     var breaches = [];
     if (maxT && tradesToday >= maxT) breaches.push("Has alcanzado tu límite de " + maxT + " operaciones hoy (" + tradesToday + ").");
     if (maxD && pnlToday <= -maxD) breaches.push("Has superado tu pérdida máxima diaria (" + signed(pnlToday) + " de −" + money(maxD) + ").");
@@ -733,12 +734,15 @@
     { k: "contracts", label: "Contratos", req: true, kw: /contrato|contract|cantidad|qty|quantity|size|lots?/i },
     { k: "entry", label: "Entrada", req: true, kw: /entrada|entry|apertura|open/i },
     { k: "exit", label: "Salida", req: true, kw: /salida|exit|cierre|close/i },
+    { k: "mae", label: "MAE", kw: /^mae$|adverse\s*excursion/i },
+    { k: "mfe", label: "MFE", kw: /^mfe$|favorable\s*excursion/i },
     { k: "pnl", label: "P&L", kw: /pnl|p&l|p\/l|profit|gananc|resultado|net/i },
     { k: "commission", label: "Comisión", kw: /comisi[óo]n|commission|fee|fees/i },
     { k: "setup", label: "Setup", kw: /setup|estrategia|strategy/i },
     { k: "emotion", label: "Emoción", kw: /emoci|emotion|mood/i },
     { k: "rating", label: "Valoración", kw: /valora|rating|score|estrella/i },
     { k: "account", label: "Cuenta", kw: /cuenta|account/i },
+    { k: "tags", label: "Etiquetas", kw: /etiqueta|tags?/i },
     { k: "note", label: "Notas", kw: /nota|note|coment|comment/i },
   ];
   function guessMapping(headers) {
@@ -831,6 +835,13 @@
     if (!(contracts > 0)) return { error: "contratos inválidos" };
     var entry = importNum(get("entry")), exit = importNum(get("exit"));
     if (isNaN(entry) || isNaN(exit)) return { error: "entrada/salida inválidas" };
+    var maeRaw = map.mae >= 0 ? importNum(get("mae")) : NaN;
+    var mfeRaw = map.mfe >= 0 ? importNum(get("mfe")) : NaN;
+    var mae = isNaN(maeRaw) ? null : maeRaw, mfe = isNaN(mfeRaw) ? null : mfeRaw;
+    // Export joins tags with a plain space (exportCSV), not a comma — split the
+    // same way on import so a re-imported export round-trips instead of the
+    // whole cell collapsing into one tag.
+    var tags = map.tags >= 0 ? String(get("tags") || "").trim().split(/\s+/).filter(Boolean) : [];
     var type = map.type >= 0 ? importType(get("type")) : "future";
     var ratingRaw = map.rating >= 0 ? Math.round(importNum(get("rating"))) : 3;
     var rating = ratingRaw >= 1 && ratingRaw <= 5 ? ratingRaw : 3;
@@ -860,7 +871,7 @@
         setup: (map.setup >= 0 && String(get("setup")).trim()) || "Ruptura",
         emotion: (map.emotion >= 0 && String(get("emotion")).trim()) || "Tranquilo",
         rating: rating, note: map.note >= 0 ? String(get("note") || "") : "",
-        pnl: pnl, commission: commission, account_id: acctId, tags: [], mae: null, mfe: null,
+        pnl: pnl, commission: commission, account_id: acctId, tags: tags, mae: mae, mfe: mfe,
       },
       acctAmbiguous: acctAmbiguous,
     };
