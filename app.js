@@ -1046,6 +1046,14 @@
     var d = state.draft;
     if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
     if (!isFinite(Number(d.entry)) || !isFinite(Number(d.exit)) || !commissionValid(d)) return;
+    // CSV import already flags duplicate fills before inserting; manual entry
+    // had no equivalent, so the same operation could get logged twice by hand
+    // with no warning. Reuse the same identity key here.
+    if (!state.editId) {
+      var candidateKey = tradeDupKey({ date: d.date, symbol: d.symbol, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
+      var isDup = state.trades.some(function (t) { return tradeDupKey(t) === candidateKey; });
+      if (isDup && !window.confirm("Ya existe una operación con la misma fecha, símbolo, dirección, contratos, entrada y salida. ¿Guardar de todas formas?")) return;
+    }
     state.savingTrade = true; renderModal();
     try {
       var commission = d.commission === "" || d.commission == null ? 0 : Number(d.commission);
@@ -1248,6 +1256,24 @@
     state.showAccountAdd = true; renderModal();
   }
   function closeAccountAdd() { state.showAccountAdd = false; state.accountEditId = null; renderModal(); }
+  // Sidebar "Balance total" must reflect live performance, not just the static
+  // starting balance typed in when each account was created. Accounts can hold
+  // different currencies, so summing them all into one number would be
+  // meaningless — only the majority currency is totaled, and the rest are
+  // called out instead of silently mixed in.
+  function acctBalanceInfo() {
+    if (!state.accounts.length) return { total: metrics().net, excluded: 0, currency: null };
+    var counts = {};
+    state.accounts.forEach(function (a) { counts[a.currency] = (counts[a.currency] || 0) + 1; });
+    var majority = null, best = -1;
+    Object.keys(counts).forEach(function (c) { if (counts[c] > best) { best = counts[c]; majority = c; } });
+    var total = 0, excluded = 0;
+    state.accounts.forEach(function (a) {
+      if (a.currency !== majority) { excluded++; return; }
+      total += (Number(a.balance) || 0) + accountStats(a.id).net;
+    });
+    return { total: total, excluded: excluded, currency: majority };
+  }
   function accountStats(accId) {
     var ts = state.trades.filter(function (t) { return t.account_id === accId; });
     var wins = ts.filter(function (t) { return t.pnl > 0; }).length;
@@ -1739,8 +1765,7 @@
   }
 
   function sidebar() {
-    var m = metrics();
-    var acctBal = state.accounts.length ? state.accounts.reduce(function (a, acc) { return a + (Number(acc.balance) || 0); }, 0) : m.net;
+    var balInfo = acctBalanceInfo();
     var today = todayISO();
     var todayPnl = state.trades.filter(function (t) { return t.date === today; }).reduce(function (a, t) { return a + t.pnl; }, 0);
     var navBase = "display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:9px 11px;border-radius:9px;font-size:13.5px;font-weight:500;transition:background .12s;";
@@ -1772,9 +1797,9 @@
         navItem("accounts", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2" y="5" width="20" height="14" rx="2.5"/><line x1="2" y1="10" x2="22" y2="10"/></svg>', "Cuentas", state.accounts.length),
         navItem("settings", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', "Ajustes")),
       h("div", { class: "side-foot", style: "margin-top:auto;display:flex;flex-direction:column;gap:12px;" },
-        h("div", { style: "border:1px solid #ECE7DD;border-radius:12px;padding:14px;background:#FBFAF7;" },
-          h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, state.accounts.length ? "Balance total" : "P&L acumulado"),
-          h("div", { style: "font-family:'Geist Mono',monospace;font-size:21px;font-weight:600;margin-top:6px;letter-spacing:-0.5px;" }, money(acctBal)),
+        h("div", { style: "border:1px solid #ECE7DD;border-radius:12px;padding:14px;background:#FBFAF7;", title: balInfo.excluded ? (balInfo.excluded + " cuenta(s) en otra moneda excluida(s) de este total") : "" },
+          h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, (state.accounts.length ? "Balance total" : "P&L acumulado") + (balInfo.excluded ? " *" : "")),
+          h("div", { style: "font-family:'Geist Mono',monospace;font-size:21px;font-weight:600;margin-top:6px;letter-spacing:-0.5px;" }, money(balInfo.total)),
           h("div", { style: "display:flex;align-items:center;gap:6px;margin-top:8px;" },
             h("span", { style: "font-size:11px;color:#807B72;" }, "Hoy"),
             h("span", { style: "font-family:Geist Mono,monospace;font-size:12.5px;font-weight:600;" + pnlColor(todayPnl) }, signed(todayPnl)))),
