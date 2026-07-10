@@ -736,7 +736,10 @@
     { k: "exit", label: "Salida", req: true, kw: /salida|exit|cierre|close/i },
     { k: "mae", label: "MAE", kw: /^mae$|adverse\s*excursion/i },
     { k: "mfe", label: "MFE", kw: /^mfe$|favorable\s*excursion/i },
-    { k: "pnl", label: "P&L", kw: /pnl|p&l|p\/l|profit|gananc|resultado|net/i },
+    // exclude keeps this off a gross P&L column when a net one is also present
+    // (our own CSV export lists "PnL bruto" before "PnL neto" — matching the
+    // first would silently import the gross figure as if it were already net).
+    { k: "pnl", label: "P&L", kw: /pnl|p&l|p\/l|profit|gananc|resultado|net/i, exclude: /bruto|gross/i },
     { k: "commission", label: "Comisión", kw: /comisi[óo]n|commission|fee|fees/i },
     { k: "setup", label: "Setup", kw: /setup|estrategia|strategy/i },
     { k: "emotion", label: "Emoción", kw: /emoci|emotion|mood/i },
@@ -748,7 +751,7 @@
   function guessMapping(headers) {
     var map = {};
     IMPORT_FIELDS.forEach(function (f) {
-      var idx = headers.findIndex(function (hd) { return f.kw.test(String(hd || "").trim()); });
+      var idx = headers.findIndex(function (hd) { var s = String(hd || "").trim(); return f.kw.test(s) && !(f.exclude && f.exclude.test(s)); });
       map[f.k] = idx; // -1 if not found
     });
     return map;
@@ -2790,7 +2793,7 @@
     // Build cards (with live, focus-preserving DOM filtering).
     var refs = [];
     var cards = state.journal.map(function (j) {
-      var dayTrades = state.trades.filter(function (t) { return t.date === j.date; });
+      var dayTrades = scopedTrades().filter(function (t) { return t.date === j.date; });
       var dayPnl = dayTrades.reduce(function (a, t) { return a + t.pnl; }, 0);
       var moodStyle = "display:inline-flex;padding:4px 11px;border-radius:20px;font-size:12px;font-weight:600;background:" + (moodColors[j.mood] || "#F1EDE5;color:#54514A");
       var tradeChips = dayTrades.length ? h("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;padding-top:13px;border-top:1px solid #F3EFE7;" },
@@ -2849,7 +2852,7 @@
     var g = {};
     state.journal.forEach(function (j) {
       if (!j.mood) return;
-      var dayPnl = state.trades.filter(function (t) { return t.date === j.date; }).reduce(function (a, t) { return a + t.pnl; }, 0);
+      var dayPnl = scopedTrades().filter(function (t) { return t.date === j.date; }).reduce(function (a, t) { return a + t.pnl; }, 0);
       if (!g[j.mood]) g[j.mood] = { sum: 0, count: 0 };
       g[j.mood].sum += dayPnl; g[j.mood].count++;
     });
@@ -2874,8 +2877,8 @@
       var w = list.filter(function (t) { return t.pnl > 0; }).length;
       return { n: n, net: net, wr: n ? (w / n) * 100 : 0, avg: n ? net / n : 0 };
     }
-    var withCl = agg(state.trades.filter(function (t) { return checkDays[t.date]; }));
-    var without = agg(state.trades.filter(function (t) { return !checkDays[t.date]; }));
+    var withCl = agg(scopedTrades().filter(function (t) { return checkDays[t.date]; }));
+    var without = agg(scopedTrades().filter(function (t) { return !checkDays[t.date]; }));
     if (!withCl.n && !without.n) return null; // no trades to compare yet
     function col(label, a, accent) {
       return h("div", { style: "flex:1;min-width:150px;background:#FBFAF7;border:1px solid #ECE7DD;border-radius:12px;padding:14px 16px;" },
@@ -3057,7 +3060,7 @@
             h("div", { style: "font-family:'Geist Mono',monospace;font-size:34px;font-weight:700;letter-spacing:-1.5px;margin-top:4px;" + pnlColor(st.pnl) }, signed(st.pnl)),
             h("div", { style: "font-size:12px;color:#A39E94;margin-top:4px;" }, movePts),
             (Number(st.commission) > 0) ? h("div", { style: "font-size:11.5px;color:#807B72;margin-top:6px;" }, signed(st.pnl + Number(st.commission)) + " bruto − " + money(st.commission) + " comisión") : null,
-            (function () { var ru = rUnitOf(state.trades); return ru > 0 ? h("div", { style: "display:inline-block;margin-top:8px;font-family:'Geist Mono',monospace;font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;" + (st.pnl >= 0 ? "background:#E8F3EC;color:#16915B;" : "background:#FBEAE7;color:#D6483B;") }, rStr(st.pnl / ru) + " · 1R = " + money(ru)) : null; })()),
+            (function () { var ru = rUnitOf(scopedTrades()); return ru > 0 ? h("div", { style: "display:inline-block;margin-top:8px;font-family:'Geist Mono',monospace;font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;" + (st.pnl >= 0 ? "background:#E8F3EC;color:#16915B;" : "background:#FBEAE7;color:#D6483B;") }, rStr(st.pnl / ru) + " · 1R = " + money(ru)) : null; })()),
           h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px;" },
             infoBox("Entrada", num(st.entry)), infoBox("Salida", num(st.exit)),
             infoBox("Contratos", st.contracts), infoBox("Setup", st.setup, "font-size:14px;font-weight:600;")),
