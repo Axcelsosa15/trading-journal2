@@ -533,6 +533,12 @@
   // ---------- CSV export ----------
   function csvCell(v) {
     var s = v == null ? "" : String(v);
+    // CSV/formula-injection guard (CWE-1236): a note/tag/setup starting with
+    // =, +, -, @, tab or CR would be executed as a formula by Excel/Sheets
+    // when the export is reopened. Prefix with a quote to force text — but
+    // leave plain negative/positive numbers (pnl, R, commission, …) alone so
+    // they stay numeric in the spreadsheet.
+    if (/^[=+\-@\t\r]/.test(s) && !/^[+-]?\d+(\.\d+)?$/.test(s)) s = "'" + s;
     if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
     return s;
   }
@@ -1398,6 +1404,10 @@
     state.scopeAccount = valid ? id : "all";
     if (!valid) { try { localStorage.removeItem("bitacora_scope_account"); } catch (e) { } }
     try { window.__bitacoraScopeAccount = state.scopeAccount; } catch (e) { }
+    // Keep the trades-list filter aligned with the restored scope (mirrors
+    // setScopeAccount) so Operaciones matches the header on page load, not
+    // just after the trader touches the selector.
+    state.fAccount = state.scopeAccount;
   }
   function setScopeAccount(id) {
     state.scopeAccount = id || "all";
@@ -1916,8 +1926,9 @@
   function loadingBody() { return h("div", { style: "max-width:1180px;margin:0 auto;color:#A39E94;font-size:14px;padding:40px;text-align:center;" }, "Cargando tus datos…"); }
 
   function dateRangeLabel() {
-    if (!state.trades.length) return "Sin operaciones aún";
-    var dates = state.trades.map(function (t) { return t.date; }).sort();
+    var ts = scopedTrades();
+    if (!ts.length) return "Sin operaciones aún";
+    var dates = ts.map(function (t) { return t.date; }).sort();
     var a = dates[0], b = dates[dates.length - 1];
     return fmtDateLong(a) + " – " + fmtDateLong(b);
   }
