@@ -783,10 +783,20 @@
   // <=12, e.g. "03/04/2026"): "mdy" reads it month-first, anything else (incl.
   // omitted) keeps the previous day-first default. Unambiguous dates (either
   // part >12) are unaffected — there's only one valid reading either way.
+  // Rejects impossible calendar dates (Feb 30, Apr 31, Feb 29 on a non-leap
+  // year...) instead of the loose "day <= 31" check that let them through and
+  // reach the DB's `date` column, where a single bad row fails the whole
+  // bulk insert and gets stuck retrying forever in the offline outbox.
+  function validDate(year, mon, day) {
+    return mon >= 1 && mon <= 12 && day >= 1 && day <= new Date(year, mon, 0).getDate();
+  }
   function importDate(v, dateOrder) {
     var s = String(v || "").trim();
     var m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/); // ISO-ish YYYY-MM-DD
-    if (m) return m[1] + "-" + pad(m[2]) + "-" + pad(m[3]);
+    if (m) {
+      if (!validDate(+m[1], +m[2], +m[3])) return null;
+      return m[1] + "-" + pad(m[2]) + "-" + pad(m[3]);
+    }
     m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/); // D/M/Y or M/D/Y
     if (m) {
       var a = +m[1], b = +m[2];
@@ -795,7 +805,7 @@
       else if (b > 12 && a <= 12) { day = b; mon = a; }    // clearly month-first
       else if (dateOrder === "mdy") { day = b; mon = a; }  // ambiguous, file proven month-first
       // else ambiguous → assume day-first (European brokers), same as before
-      if (mon < 1 || mon > 12 || day < 1 || day > 31) return null;
+      if (!validDate(+m[3], mon, day)) return null;
       return m[3] + "-" + pad(mon) + "-" + pad(day);
     }
     return null;
@@ -1815,7 +1825,7 @@
     var balInfo = acctBalanceInfo();
     var acctBal = balInfo.total != null ? balInfo.total : m.net;
     var today = todayISO();
-    var todayPnl = state.trades.filter(function (t) { return t.date === today; }).reduce(function (a, t) { return a + t.pnl; }, 0);
+    var todayPnl = scopedTrades().filter(function (t) { return t.date === today; }).reduce(function (a, t) { return a + t.pnl; }, 0);
     var navBase = "display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:9px 11px;border-radius:9px;font-size:13.5px;font-weight:500;transition:background .12s;";
     var navStyle = function (k) { return navBase + (state.view === k ? "background:#16181C;color:#fff;font-weight:600;" : "color:#54514A;background:none;"); };
     var navCountStyle = "margin-left:auto;font-size:11px;font-weight:600;color:#A39E94;font-family:Geist Mono,monospace;";
