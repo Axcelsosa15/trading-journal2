@@ -868,7 +868,7 @@
   // Identity key for duplicate detection: same date/symbol/side/size/entry/exit
   // is almost certainly the same fill, whether re-imported or double-entered.
   function tradeDupKey(t) {
-    return [t.date, String(t.symbol || "").toUpperCase(), t.side, Number(t.contracts), Number(t.entry), Number(t.exit)].join("|");
+    return [t.date, String(t.symbol || "").toUpperCase(), t.side, Number(t.contracts), Number(t.entry), Number(t.exit), t.account_id || "none"].join("|");
   }
   // Parse all data rows against the current mapping → { valid:[rows], invalid:n, errors:[], dupCount:n }.
   // Duplicates are flagged, not dropped: importing is still the user's call, but
@@ -1090,7 +1090,7 @@
     // re-entered fill (same date/symbol/side/size/entry/exit), not just a
     // double-click on this modal.
     if (!state.editId) {
-      var candidateKey = tradeDupKey({ date: d.date, symbol: d.symbol, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
+      var candidateKey = tradeDupKey({ date: d.date, symbol: d.symbol, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), account_id: d.account_id || null });
       var isDup = state.trades.some(function (t) { return tradeDupKey(t) === candidateKey; });
       if (isDup && !window.confirm("Ya existe una operación con la misma fecha, símbolo, dirección, tamaño, entrada y salida. ¿Guardar de todas formas?")) return;
     }
@@ -1797,7 +1797,7 @@
   // within the majority currency (mixing e.g. USD and EUR would fabricate
   // a number that means nothing); the rest are flagged instead of guessed.
   function acctBalanceInfo() {
-    var accs = state.accounts;
+    var accs = state.scopeAccount === "all" ? state.accounts : state.accounts.filter(function (a) { return a.id === state.scopeAccount; });
     if (!accs.length) return { total: null, currency: null, excluded: 0 };
     var sums = {}, counts = {};
     accs.forEach(function (a) {
@@ -1815,7 +1815,7 @@
     var balInfo = acctBalanceInfo();
     var acctBal = balInfo.total != null ? balInfo.total : m.net;
     var today = todayISO();
-    var todayPnl = state.trades.filter(function (t) { return t.date === today; }).reduce(function (a, t) { return a + t.pnl; }, 0);
+    var todayPnl = scopedTrades().filter(function (t) { return t.date === today; }).reduce(function (a, t) { return a + t.pnl; }, 0);
     var navBase = "display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:9px 11px;border-radius:9px;font-size:13.5px;font-weight:500;transition:background .12s;";
     var navStyle = function (k) { return navBase + (state.view === k ? "background:#16181C;color:#fff;font-weight:600;" : "color:#54514A;background:none;"); };
     var navCountStyle = "margin-left:auto;font-size:11px;font-weight:600;color:#A39E94;font-family:Geist Mono,monospace;";
@@ -2836,9 +2836,11 @@
   // Average day P&L grouped by the journal mood logged that day.
   function moodPerformancePanel(moodColors) {
     var g = {};
+    var seenDates = {};
     state.journal.forEach(function (j) {
-      if (!j.mood) return;
-      var dayPnl = state.trades.filter(function (t) { return t.date === j.date; }).reduce(function (a, t) { return a + t.pnl; }, 0);
+      if (!j.mood || seenDates[j.date]) return;
+      seenDates[j.date] = true;
+      var dayPnl = scopedTrades().filter(function (t) { return t.date === j.date; }).reduce(function (a, t) { return a + t.pnl; }, 0);
       if (!g[j.mood]) g[j.mood] = { sum: 0, count: 0 };
       g[j.mood].sum += dayPnl; g[j.mood].count++;
     });
@@ -2863,8 +2865,8 @@
       var w = list.filter(function (t) { return t.pnl > 0; }).length;
       return { n: n, net: net, wr: n ? (w / n) * 100 : 0, avg: n ? net / n : 0 };
     }
-    var withCl = agg(state.trades.filter(function (t) { return checkDays[t.date]; }));
-    var without = agg(state.trades.filter(function (t) { return !checkDays[t.date]; }));
+    var withCl = agg(scopedTrades().filter(function (t) { return checkDays[t.date]; }));
+    var without = agg(scopedTrades().filter(function (t) { return !checkDays[t.date]; }));
     if (!withCl.n && !without.n) return null; // no trades to compare yet
     function col(label, a, accent) {
       return h("div", { style: "flex:1;min-width:150px;background:#FBFAF7;border:1px solid #ECE7DD;border-radius:12px;padding:14px 16px;" },
