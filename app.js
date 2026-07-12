@@ -3068,7 +3068,10 @@
     if (!st) return null;
     var r = buildRow(st);
     var moveUnit = st.type === "option" ? " pts prima" : " pts";
-    var mv = Number(st.exit) - Number(st.entry);
+    // Same directional convention as pnlOf(): for a short, price falling is the
+    // winning direction, so the displayed move must flip sign like the P&L does
+    // — otherwise a winning short shows a "−" move right under a green result.
+    var mv = (Number(st.exit) - Number(st.entry)) * (st.side === "long" ? 1 : -1);
     var movePts = (mv >= 0 ? "+" : "−") + num(Math.abs(mv)) + moveUnit + " × " + st.contracts;
     var instr = st.type === "option" ? "Opción" : "Futuro";
     var note = st.note || "Sin notas.";
