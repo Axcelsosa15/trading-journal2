@@ -898,7 +898,7 @@
   // Identity key for duplicate detection: same date/symbol/side/size/entry/exit
   // is almost certainly the same fill, whether re-imported or double-entered.
   function tradeDupKey(t) {
-    return [t.date, String(t.symbol || "").toUpperCase(), t.side, Number(t.contracts), Number(t.entry), Number(t.exit)].join("|");
+    return [t.date, String(t.symbol || "").toUpperCase(), t.side, Number(t.contracts), Number(t.entry), Number(t.exit), t.account_id || "none"].join("|");
   }
   // Parse all data rows against the current mapping → { valid:[rows], invalid:n, errors:[], dupCount:n }.
   // Duplicates are flagged, not dropped: importing is still the user's call, but
@@ -1120,7 +1120,7 @@
     // re-entered fill (same date/symbol/side/size/entry/exit), not just a
     // double-click on this modal.
     if (!state.editId) {
-      var candidateKey = tradeDupKey({ date: d.date, symbol: d.symbol, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
+      var candidateKey = tradeDupKey({ date: d.date, symbol: d.symbol, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), account_id: d.account_id || null });
       var isDup = state.trades.some(function (t) { return tradeDupKey(t) === candidateKey; });
       if (isDup && !window.confirm("Ya existe una operación con la misma fecha, símbolo, dirección, tamaño, entrada y salida. ¿Guardar de todas formas?")) return;
     }
@@ -1831,7 +1831,7 @@
   // within the majority currency (mixing e.g. USD and EUR would fabricate
   // a number that means nothing); the rest are flagged instead of guessed.
   function acctBalanceInfo() {
-    var accs = state.accounts;
+    var accs = state.scopeAccount === "all" ? state.accounts : state.accounts.filter(function (a) { return a.id === state.scopeAccount; });
     if (!accs.length) return { total: null, currency: null, excluded: 0 };
     var sums = {}, counts = {};
     accs.forEach(function (a) {
@@ -2871,8 +2871,10 @@
   // Average day P&L grouped by the journal mood logged that day.
   function moodPerformancePanel(moodColors) {
     var g = {};
+    var seenDates = {};
     state.journal.forEach(function (j) {
-      if (!j.mood) return;
+      if (!j.mood || seenDates[j.date]) return;
+      seenDates[j.date] = true;
       var dayPnl = scopedTrades().filter(function (t) { return t.date === j.date; }).reduce(function (a, t) { return a + t.pnl; }, 0);
       if (!g[j.mood]) g[j.mood] = { sum: 0, count: 0 };
       g[j.mood].sum += dayPnl; g[j.mood].count++;
