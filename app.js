@@ -222,7 +222,12 @@
     GC: 100, MGC: 10, SI: 5000, SIL: 1000, HG: 25000, PL: 50, PA: 100,
     ZB: 1000, ZN: 1000, ZF: 1000, ZT: 2000, UB: 1000,
     "6E": 125000, "6B": 62500, "6A": 100000, "6C": 100000, "6S": 125000,
-    ZC: 50, ZW: 50, ZS: 50
+    ZC: 50, ZW: 50, ZS: 50,
+    // CME crypto futures (5 BTC / 50 ETH per full contract, 0.1 BTC / 0.1 ETH
+    // per micro) and Cboe VIX futures (multiplier $1,000) — increasingly common
+    // in retail futures accounts and previously missing, so any logged trade
+    // silently fell back to the wrong $1/point default (see M2K fix, #66).
+    BTC: 5, MBT: 0.1, ETH: 50, MET: 0.1, VX: 1000
   };
   function PV(t) {
     return t.type === "option" ? 100 : (FUTURES_PV[String(t.symbol || "").trim().toUpperCase()] || 1);
