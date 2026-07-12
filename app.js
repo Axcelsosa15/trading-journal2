@@ -916,7 +916,7 @@
     var existingKeys = {};
     state.trades.forEach(function (t) { existingKeys[tradeDupKey(t)] = true; });
     var seenInFile = {};
-    var dateOrder = detectDateOrder(im.rows.slice(1), im.map.date);
+    var dateOrder = (im.dateFormat === "dmy" || im.dateFormat === "mdy") ? im.dateFormat : detectDateOrder(im.rows.slice(1), im.map.date);
     im.rows.slice(1).forEach(function (cells, n) {
       var r = buildImportRow(cells, im.map, dateOrder);
       if (r.row) {
