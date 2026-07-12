@@ -374,10 +374,10 @@
     var r = state.settings.rules;
     var maxT = ruleNum(r.maxTradesPerDay), maxD = ruleNum(r.maxDailyLoss), maxW = ruleNum(r.maxWeeklyLoss);
     var today = todayISO(), wkStart = weekStartISO();
-    var todays = state.trades.filter(function (t) { return t.date === today; });
+    var todays = scopedTrades().filter(function (t) { return t.date === today; });
     var tradesToday = todays.length;
     var pnlToday = todays.reduce(function (a, t) { return a + t.pnl; }, 0);
-    var pnlWeek = state.trades.filter(function (t) { return t.date >= wkStart; }).reduce(function (a, t) { return a + t.pnl; }, 0);
+    var pnlWeek = scopedTrades().filter(function (t) { return t.date >= wkStart; }).reduce(function (a, t) { return a + t.pnl; }, 0);
     var breaches = [];
     if (maxT && tradesToday >= maxT) breaches.push("Has alcanzado tu límite de " + maxT + " operaciones hoy (" + tradesToday + ").");
     if (maxD && pnlToday <= -maxD) breaches.push("Has superado tu pérdida máxima diaria (" + signed(pnlToday) + " de −" + money(maxD) + ").");
@@ -830,7 +830,7 @@
     var contracts = Math.round(importNum(get("contracts")));
     if (!(contracts > 0)) return { error: "contratos inválidos" };
     var entry = importNum(get("entry")), exit = importNum(get("exit"));
-    if (isNaN(entry) || isNaN(exit)) return { error: "entrada/salida inválidas" };
+    if (isNaN(entry) || isNaN(exit) || !(entry > 0) || !(exit > 0)) return { error: "entrada/salida inválidas" };
     var type = map.type >= 0 ? importType(get("type")) : "future";
     var ratingRaw = map.rating >= 0 ? Math.round(importNum(get("rating"))) : 3;
     var rating = ratingRaw >= 1 && ratingRaw <= 5 ? ratingRaw : 3;
@@ -1084,7 +1084,7 @@
     if (state.savingTrade) return;
     var d = state.draft;
     if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
-    if (!isFinite(Number(d.entry)) || !isFinite(Number(d.exit)) || !commissionValid(d)) return;
+    if (!isFinite(Number(d.entry)) || !isFinite(Number(d.exit)) || !(Number(d.entry) > 0) || !(Number(d.exit) > 0) || !commissionValid(d)) return;
     if (!d.date || d.date > todayISO()) return;
     // Same guard CSV import already applies (tradeDupKey): catch a manually
     // re-entered fill (same date/symbol/side/size/entry/exit), not just a
@@ -3172,7 +3172,7 @@
     var pnl = valid ? netPnlOf(t, commission) : 0;
     return { valid: valid, pnl: pnl, gross: gross, commission: commission };
   }
-  function isSaveValid() { var d = state.draft; return d.symbol && d.entry !== "" && d.exit !== "" && Number(d.contracts) > 0 && commissionValid(d) && !!d.date && d.date <= todayISO(); }
+  function isSaveValid() { var d = state.draft; return d.symbol && d.entry !== "" && d.exit !== "" && Number(d.entry) > 0 && Number(d.exit) > 0 && Number(d.contracts) > 0 && commissionValid(d) && !!d.date && d.date <= todayISO(); }
 
   function modalFrame(title, onClose, bodyChildren, footerChildren, width) {
     var modal = h("div", { class: "dc-modal", style: "position:relative;width:" + (width || 540) + "px;max-width:100%;max-height:92vh;overflow-y:auto;background:#fff;border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,.22);" },
@@ -3315,8 +3315,8 @@
         field("Dirección", fieldSelect(d, "side", [["long", "Largo"], ["short", "Corto"]], refresh))),
       h("div", { style: "display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;" },
         field("Contratos", fieldInput(d, "contracts", { type: "number", min: "1", style: inMono, onInput: function (e) { d.contracts = e.target.value; refresh(); } })),
-        field("Entrada", fieldInput(d, "entry", { type: "number", step: "0.01", placeholder: "0.00", style: inMono, onInput: function (e) { d.entry = e.target.value; refresh(); } })),
-        field("Salida", fieldInput(d, "exit", { type: "number", step: "0.01", placeholder: "0.00", style: inMono, onInput: function (e) { d.exit = e.target.value; refresh(); } }))),
+        field("Entrada", fieldInput(d, "entry", { type: "number", step: "0.01", min: "0.01", placeholder: "0.00", style: inMono, onInput: function (e) { d.entry = e.target.value; refresh(); } })),
+        field("Salida", fieldInput(d, "exit", { type: "number", step: "0.01", min: "0.01", placeholder: "0.00", style: inMono, onInput: function (e) { d.exit = e.target.value; refresh(); } }))),
       h("div", { style: "display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;" },
         field("Setup", fieldSelect(d, "setup", SETUPS.map(function (x) { return [x, x]; }))),
         field("Emoción", fieldSelect(d, "emotion", [["Tranquilo", "Tranquilo"], ["Confiado", "Confiado"], ["Ansioso", "Ansioso"], ["FOMO", "FOMO"]])),
