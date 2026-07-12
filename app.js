@@ -1118,14 +1118,18 @@
   async function saveTrade() {
     if (state.savingTrade) return;
     var d = state.draft;
-    if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
+    // Contracts are whole units (you can't hold 1.5 futures contracts) — round
+    // the same way CSV import already does (Math.round(importNum(...))) so a
+    // stray "1.5" typed in the field doesn't save a fractional position size.
+    var contracts = Math.round(Number(d.contracts));
+    if (!d.symbol || d.entry === "" || d.exit === "" || !(contracts > 0)) return;
     if (!isFinite(Number(d.entry)) || !isFinite(Number(d.exit)) || !commissionValid(d)) return;
     if (!d.date || d.date > todayISO()) return;
     // Same guard CSV import already applies (tradeDupKey): catch a manually
     // re-entered fill (same date/symbol/side/size/entry/exit), not just a
     // double-click on this modal.
     if (!state.editId) {
-      var candidateKey = tradeDupKey({ date: d.date, symbol: d.symbol, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), account_id: d.account_id || null });
+      var candidateKey = tradeDupKey({ date: d.date, symbol: d.symbol, side: d.side, contracts: contracts, entry: Number(d.entry), exit: Number(d.exit), account_id: d.account_id || null });
       var isDup = state.trades.some(function (t) { return tradeDupKey(t) === candidateKey; });
       if (isDup && !window.confirm("Ya existe una operación con la misma fecha, símbolo, dirección, tamaño, entrada y salida. ¿Guardar de todas formas?")) return;
     }
@@ -1133,14 +1137,14 @@
     try {
       var symbol = d.symbol.trim().toUpperCase();
       var commission = d.commission === "" || d.commission == null ? 0 : Number(d.commission);
-      var pnl = netPnlOf({ symbol: symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) }, commission);
+      var pnl = netPnlOf({ symbol: symbol, type: d.type, side: d.side, contracts: contracts, entry: Number(d.entry), exit: Number(d.exit) }, commission);
       // Upload a freshly attached screenshot first (online only); otherwise keep
       // whatever path the trade already had.
       var oldShotPath = d.screenshot_path || null;
       var shotPath = oldShotPath;
       var shotUploadFailed = false;
       if (d._imageFile) { var p = await uploadScreenshot(d._imageFile); if (p) shotPath = p; else shotUploadFailed = true; }
-      var row = { date: d.date, time: d.time || null, symbol: symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, commission: commission, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
+      var row = { date: d.date, time: d.time || null, symbol: symbol, type: d.type, side: d.side, contracts: contracts, entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, commission: commission, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
       if (state.editId) {
         if (!isOnline()) { window.alert("Necesitas conexión para editar una operación. Las operaciones nuevas sí se guardan sin conexión."); return; }
         var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
