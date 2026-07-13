@@ -222,7 +222,12 @@
     GC: 100, MGC: 10, SI: 5000, SIL: 1000, HG: 25000, PL: 50, PA: 100,
     ZB: 1000, ZN: 1000, ZF: 1000, ZT: 2000, UB: 1000,
     "6E": 125000, "6B": 62500, "6A": 100000, "6C": 100000, "6S": 125000,
-    ZC: 50, ZW: 50, ZS: 50
+    ZC: 50, ZW: 50, ZS: 50,
+    // CME crypto futures (5 BTC / 50 ETH per full contract, 0.1 BTC / 0.1 ETH
+    // per micro) and Cboe VIX futures (multiplier $1,000) — increasingly common
+    // in retail futures accounts and previously missing, so any logged trade
+    // silently fell back to the wrong $1/point default (see M2K fix, #66).
+    BTC: 5, MBT: 0.1, ETH: 50, MET: 0.1, VX: 1000
   };
   function PV(t) {
     return t.type === "option" ? 100 : (FUTURES_PV[String(t.symbol || "").trim().toUpperCase()] || 1);
@@ -374,10 +379,11 @@
     var r = state.settings.rules;
     var maxT = ruleNum(r.maxTradesPerDay), maxD = ruleNum(r.maxDailyLoss), maxW = ruleNum(r.maxWeeklyLoss);
     var today = todayISO(), wkStart = weekStartISO();
-    var todays = state.trades.filter(function (t) { return t.date === today; });
+    var ts = scopedTrades();
+    var todays = ts.filter(function (t) { return t.date === today; });
     var tradesToday = todays.length;
     var pnlToday = todays.reduce(function (a, t) { return a + t.pnl; }, 0);
-    var pnlWeek = state.trades.filter(function (t) { return t.date >= wkStart; }).reduce(function (a, t) { return a + t.pnl; }, 0);
+    var pnlWeek = ts.filter(function (t) { return t.date >= wkStart; }).reduce(function (a, t) { return a + t.pnl; }, 0);
     var breaches = [];
     if (maxT && tradesToday >= maxT) breaches.push("Has alcanzado tu límite de " + maxT + " operaciones hoy (" + tradesToday + ").");
     if (maxD && pnlToday <= -maxD) breaches.push("Has superado tu pérdida máxima diaria (" + signed(pnlToday) + " de −" + money(maxD) + ").");
@@ -532,6 +538,12 @@
   // ---------- CSV export ----------
   function csvCell(v) {
     var s = v == null ? "" : String(v);
+    // CSV/formula-injection guard (CWE-1236): a note/tag/setup starting with
+    // =, +, -, @, tab or CR would be executed as a formula by Excel/Sheets
+    // when the export is reopened. Prefix with a quote to force text — but
+    // leave plain negative/positive numbers (pnl, R, commission, …) alone so
+    // they stay numeric in the spreadsheet.
+    if (/^[=+\-@\t\r]/.test(s) && !/^[+-]?\d+(\.\d+)?$/.test(s)) s = "'" + s;
     if (/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
     return s;
   }
@@ -733,18 +745,24 @@
     { k: "contracts", label: "Contratos", req: true, kw: /contrato|contract|cantidad|qty|quantity|size|lots?/i },
     { k: "entry", label: "Entrada", req: true, kw: /entrada|entry|apertura|open/i },
     { k: "exit", label: "Salida", req: true, kw: /salida|exit|cierre|close/i },
-    { k: "pnl", label: "P&L", kw: /pnl|p&l|p\/l|profit|gananc|resultado|net/i },
+    { k: "mae", label: "MAE", kw: /^mae$|adverse\s*excursion/i },
+    { k: "mfe", label: "MFE", kw: /^mfe$|favorable\s*excursion/i },
+    // exclude keeps this off a gross P&L column when a net one is also present
+    // (our own CSV export lists "PnL bruto" before "PnL neto" — matching the
+    // first would silently import the gross figure as if it were already net).
+    { k: "pnl", label: "P&L", kw: /pnl|p&l|p\/l|profit|gananc|resultado|net/i, exclude: /bruto|gross/i },
     { k: "commission", label: "Comisión", kw: /comisi[óo]n|commission|fee|fees/i },
     { k: "setup", label: "Setup", kw: /setup|estrategia|strategy/i },
     { k: "emotion", label: "Emoción", kw: /emoci|emotion|mood/i },
     { k: "rating", label: "Valoración", kw: /valora|rating|score|estrella/i },
     { k: "account", label: "Cuenta", kw: /cuenta|account/i },
+    { k: "tags", label: "Etiquetas", kw: /etiqueta|tags?/i },
     { k: "note", label: "Notas", kw: /nota|note|coment|comment/i },
   ];
   function guessMapping(headers) {
     var map = {};
     IMPORT_FIELDS.forEach(function (f) {
-      var idx = headers.findIndex(function (hd) { return f.kw.test(String(hd || "").trim()); });
+      var idx = headers.findIndex(function (hd) { var s = String(hd || "").trim(); return f.kw.test(s) && !(f.exclude && f.exclude.test(s)); });
       map[f.k] = idx; // -1 if not found
     });
     return map;
@@ -783,10 +801,20 @@
   // <=12, e.g. "03/04/2026"): "mdy" reads it month-first, anything else (incl.
   // omitted) keeps the previous day-first default. Unambiguous dates (either
   // part >12) are unaffected — there's only one valid reading either way.
+  // Rejects impossible calendar dates (Feb 30, Apr 31, Feb 29 on a non-leap
+  // year...) instead of the loose "day <= 31" check that let them through and
+  // reach the DB's `date` column, where a single bad row fails the whole
+  // bulk insert and gets stuck retrying forever in the offline outbox.
+  function validDate(year, mon, day) {
+    return mon >= 1 && mon <= 12 && day >= 1 && day <= new Date(year, mon, 0).getDate();
+  }
   function importDate(v, dateOrder) {
     var s = String(v || "").trim();
     var m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/); // ISO-ish YYYY-MM-DD
-    if (m) return m[1] + "-" + pad(m[2]) + "-" + pad(m[3]);
+    if (m) {
+      if (!validDate(+m[1], +m[2], +m[3])) return null;
+      return m[1] + "-" + pad(m[2]) + "-" + pad(m[3]);
+    }
     m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/); // D/M/Y or M/D/Y
     if (m) {
       var a = +m[1], b = +m[2];
@@ -795,7 +823,7 @@
       else if (b > 12 && a <= 12) { day = b; mon = a; }    // clearly month-first
       else if (dateOrder === "mdy") { day = b; mon = a; }  // ambiguous, file proven month-first
       // else ambiguous → assume day-first (European brokers), same as before
-      if (mon < 1 || mon > 12 || day < 1 || day > 31) return null;
+      if (!validDate(+m[3], mon, day)) return null;
       return m[3] + "-" + pad(mon) + "-" + pad(day);
     }
     return null;
@@ -830,7 +858,14 @@
     var contracts = Math.round(importNum(get("contracts")));
     if (!(contracts > 0)) return { error: "contratos inválidos" };
     var entry = importNum(get("entry")), exit = importNum(get("exit"));
-    if (isNaN(entry) || isNaN(exit)) return { error: "entrada/salida inválidas" };
+    if (isNaN(entry) || isNaN(exit) || !(entry > 0) || !(exit > 0)) return { error: "entrada/salida inválidas" };
+    var maeRaw = map.mae >= 0 ? importNum(get("mae")) : NaN;
+    var mfeRaw = map.mfe >= 0 ? importNum(get("mfe")) : NaN;
+    var mae = isNaN(maeRaw) ? null : maeRaw, mfe = isNaN(mfeRaw) ? null : mfeRaw;
+    // Export joins tags with a plain space (exportCSV), not a comma — split the
+    // same way on import so a re-imported export round-trips instead of the
+    // whole cell collapsing into one tag.
+    var tags = map.tags >= 0 ? String(get("tags") || "").trim().split(/\s+/).filter(Boolean) : [];
     var type = map.type >= 0 ? importType(get("type")) : "future";
     var ratingRaw = map.rating >= 0 ? Math.round(importNum(get("rating"))) : 3;
     var rating = ratingRaw >= 1 && ratingRaw <= 5 ? ratingRaw : 3;
@@ -860,7 +895,7 @@
         setup: (map.setup >= 0 && String(get("setup")).trim()) || "Ruptura",
         emotion: (map.emotion >= 0 && String(get("emotion")).trim()) || "Tranquilo",
         rating: rating, note: map.note >= 0 ? String(get("note") || "") : "",
-        pnl: pnl, commission: commission, account_id: acctId, tags: [], mae: null, mfe: null,
+        pnl: pnl, commission: commission, account_id: acctId, tags: tags, mae: mae, mfe: mfe,
       },
       acctAmbiguous: acctAmbiguous,
     };
@@ -868,7 +903,7 @@
   // Identity key for duplicate detection: same date/symbol/side/size/entry/exit
   // is almost certainly the same fill, whether re-imported or double-entered.
   function tradeDupKey(t) {
-    return [t.date, String(t.symbol || "").toUpperCase(), t.side, Number(t.contracts), Number(t.entry), Number(t.exit)].join("|");
+    return [t.date, String(t.symbol || "").toUpperCase(), t.side, Number(t.contracts), Number(t.entry), Number(t.exit), t.account_id || "none"].join("|");
   }
   // Parse all data rows against the current mapping → { valid:[rows], invalid:n, errors:[], dupCount:n }.
   // Duplicates are flagged, not dropped: importing is still the user's call, but
@@ -881,7 +916,7 @@
     var existingKeys = {};
     state.trades.forEach(function (t) { existingKeys[tradeDupKey(t)] = true; });
     var seenInFile = {};
-    var dateOrder = detectDateOrder(im.rows.slice(1), im.map.date);
+    var dateOrder = (im.dateFormat === "dmy" || im.dateFormat === "mdy") ? im.dateFormat : detectDateOrder(im.rows.slice(1), im.map.date);
     im.rows.slice(1).forEach(function (cells, n) {
       var r = buildImportRow(cells, im.map, dateOrder);
       if (r.row) {
@@ -1083,14 +1118,18 @@
   async function saveTrade() {
     if (state.savingTrade) return;
     var d = state.draft;
-    if (!d.symbol || d.entry === "" || d.exit === "" || Number(d.contracts) <= 0) return;
-    if (!isFinite(Number(d.entry)) || !isFinite(Number(d.exit)) || !commissionValid(d)) return;
+    // Contracts are whole units (you can't hold 1.5 futures contracts) — round
+    // the same way CSV import already does (Math.round(importNum(...))) so a
+    // stray "1.5" typed in the field doesn't save a fractional position size.
+    var contracts = Math.round(Number(d.contracts));
+    if (!d.symbol || d.entry === "" || d.exit === "" || !(contracts > 0)) return;
+    if (!isFinite(Number(d.entry)) || !isFinite(Number(d.exit)) || !(Number(d.entry) > 0) || !(Number(d.exit) > 0) || !commissionValid(d)) return;
     if (!d.date || d.date > todayISO()) return;
     // Same guard CSV import already applies (tradeDupKey): catch a manually
     // re-entered fill (same date/symbol/side/size/entry/exit), not just a
     // double-click on this modal.
     if (!state.editId) {
-      var candidateKey = tradeDupKey({ date: d.date, symbol: d.symbol, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) });
+      var candidateKey = tradeDupKey({ date: d.date, symbol: d.symbol, side: d.side, contracts: contracts, entry: Number(d.entry), exit: Number(d.exit), account_id: d.account_id || null });
       var isDup = state.trades.some(function (t) { return tradeDupKey(t) === candidateKey; });
       if (isDup && !window.confirm("Ya existe una operación con la misma fecha, símbolo, dirección, tamaño, entrada y salida. ¿Guardar de todas formas?")) return;
     }
@@ -1098,14 +1137,14 @@
     try {
       var symbol = d.symbol.trim().toUpperCase();
       var commission = d.commission === "" || d.commission == null ? 0 : Number(d.commission);
-      var pnl = netPnlOf({ symbol: symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit) }, commission);
+      var pnl = netPnlOf({ symbol: symbol, type: d.type, side: d.side, contracts: contracts, entry: Number(d.entry), exit: Number(d.exit) }, commission);
       // Upload a freshly attached screenshot first (online only); otherwise keep
       // whatever path the trade already had.
       var oldShotPath = d.screenshot_path || null;
       var shotPath = oldShotPath;
       var shotUploadFailed = false;
       if (d._imageFile) { var p = await uploadScreenshot(d._imageFile); if (p) shotPath = p; else shotUploadFailed = true; }
-      var row = { date: d.date, time: d.time || null, symbol: symbol, type: d.type, side: d.side, contracts: Number(d.contracts), entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, commission: commission, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
+      var row = { date: d.date, time: d.time || null, symbol: symbol, type: d.type, side: d.side, contracts: contracts, entry: Number(d.entry), exit: Number(d.exit), setup: d.setup, emotion: d.emotion, rating: Number(d.rating) || 3, note: d.note, pnl: pnl, commission: commission, account_id: d.account_id || null, tags: parseTags(d.tags), mae: d.mae === "" ? null : Number(d.mae), mfe: d.mfe === "" ? null : Number(d.mfe), screenshot_path: shotPath };
       if (state.editId) {
         if (!isOnline()) { window.alert("Necesitas conexión para editar una operación. Las operaciones nuevas sí se guardan sin conexión."); return; }
         var up = await SB.from("trades").update(row).eq("id", state.editId).select().single();
@@ -1384,6 +1423,10 @@
     state.scopeAccount = valid ? id : "all";
     if (!valid) { try { localStorage.removeItem("bitacora_scope_account"); } catch (e) { } }
     try { window.__bitacoraScopeAccount = state.scopeAccount; } catch (e) { }
+    // Keep the trades-list filter aligned with the restored scope (mirrors
+    // setScopeAccount) so Operaciones matches the header on page load, not
+    // just after the trader touches the selector.
+    state.fAccount = state.scopeAccount;
   }
   function setScopeAccount(id) {
     state.scopeAccount = id || "all";
@@ -1797,7 +1840,7 @@
   // within the majority currency (mixing e.g. USD and EUR would fabricate
   // a number that means nothing); the rest are flagged instead of guessed.
   function acctBalanceInfo() {
-    var accs = state.accounts;
+    var accs = state.scopeAccount === "all" ? state.accounts : state.accounts.filter(function (a) { return a.id === state.scopeAccount; });
     if (!accs.length) return { total: null, currency: null, excluded: 0 };
     var sums = {}, counts = {};
     accs.forEach(function (a) {
@@ -1815,7 +1858,7 @@
     var balInfo = acctBalanceInfo();
     var acctBal = balInfo.total != null ? balInfo.total : m.net;
     var today = todayISO();
-    var todayPnl = state.trades.filter(function (t) { return t.date === today; }).reduce(function (a, t) { return a + t.pnl; }, 0);
+    var todayPnl = scopedTrades().filter(function (t) { return t.date === today; }).reduce(function (a, t) { return a + t.pnl; }, 0);
     var navBase = "display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:9px 11px;border-radius:9px;font-size:13.5px;font-weight:500;transition:background .12s;";
     var navStyle = function (k) { return navBase + (state.view === k ? "background:#16181C;color:#fff;font-weight:600;" : "color:#54514A;background:none;"); };
     var navCountStyle = "margin-left:auto;font-size:11px;font-weight:600;color:#A39E94;font-family:Geist Mono,monospace;";
@@ -1835,7 +1878,7 @@
           h("div", { style: "font-size:11px;color:#A39E94;margin-top:3px;letter-spacing:.3px;" }, "TRADING JOURNAL"))),
       h("nav", { style: "display:flex;flex-direction:column;gap:2px;" },
         navItem("dashboard", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg>', "Resumen"),
-        navItem("trades", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="18" r="1.3" fill="currentColor" stroke="none"/></svg>', "Operaciones", state.trades.length),
+        navItem("trades", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="18" r="1.3" fill="currentColor" stroke="none"/></svg>', "Operaciones", scopedTrades().length),
         navItem("calendar", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4.5" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/></svg>', "Calendario"),
         navItem("analytics", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><line x1="4" y1="20" x2="4" y2="13"/><line x1="10" y1="20" x2="10" y2="5"/><line x1="16" y1="20" x2="16" y2="9"/><line x1="22" y1="20" x2="22" y2="15"/></svg>', "Analítica"),
         navItem("insights", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V18h6v-1.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg>', "Insights"),
@@ -1902,8 +1945,9 @@
   function loadingBody() { return h("div", { style: "max-width:1180px;margin:0 auto;color:#A39E94;font-size:14px;padding:40px;text-align:center;" }, "Cargando tus datos…"); }
 
   function dateRangeLabel() {
-    if (!state.trades.length) return "Sin operaciones aún";
-    var dates = state.trades.map(function (t) { return t.date; }).sort();
+    var ts = scopedTrades();
+    if (!ts.length) return "Sin operaciones aún";
+    var dates = ts.map(function (t) { return t.date; }).sort();
     var a = dates[0], b = dates[dates.length - 1];
     return fmtDateLong(a) + " – " + fmtDateLong(b);
   }
@@ -2062,7 +2106,7 @@
   }
   function dashboardView() {
     var onb = state.settings.onboardingDone ? null : onboardingPanel();
-    if (!state.trades.length) {
+    if (!scopedTrades().length) {
       return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:18px;" },
         onb || emptyCard("Aún no tienes operaciones", "Pulsa “Nueva operación” arriba a la derecha para registrar tu primer trade."));
     }
@@ -2779,7 +2823,7 @@
     // Build cards (with live, focus-preserving DOM filtering).
     var refs = [];
     var cards = state.journal.map(function (j) {
-      var dayTrades = state.trades.filter(function (t) { return t.date === j.date; });
+      var dayTrades = scopedTrades().filter(function (t) { return t.date === j.date; });
       var dayPnl = dayTrades.reduce(function (a, t) { return a + t.pnl; }, 0);
       var moodStyle = "display:inline-flex;padding:4px 11px;border-radius:20px;font-size:12px;font-weight:600;background:" + (moodColors[j.mood] || "#F1EDE5;color:#54514A");
       var tradeChips = dayTrades.length ? h("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;padding-top:13px;border-top:1px solid #F3EFE7;" },
@@ -2836,9 +2880,11 @@
   // Average day P&L grouped by the journal mood logged that day.
   function moodPerformancePanel(moodColors) {
     var g = {};
+    var seenDates = {};
     state.journal.forEach(function (j) {
-      if (!j.mood) return;
-      var dayPnl = state.trades.filter(function (t) { return t.date === j.date; }).reduce(function (a, t) { return a + t.pnl; }, 0);
+      if (!j.mood || seenDates[j.date]) return;
+      seenDates[j.date] = true;
+      var dayPnl = scopedTrades().filter(function (t) { return t.date === j.date; }).reduce(function (a, t) { return a + t.pnl; }, 0);
       if (!g[j.mood]) g[j.mood] = { sum: 0, count: 0 };
       g[j.mood].sum += dayPnl; g[j.mood].count++;
     });
@@ -2863,8 +2909,8 @@
       var w = list.filter(function (t) { return t.pnl > 0; }).length;
       return { n: n, net: net, wr: n ? (w / n) * 100 : 0, avg: n ? net / n : 0 };
     }
-    var withCl = agg(state.trades.filter(function (t) { return checkDays[t.date]; }));
-    var without = agg(state.trades.filter(function (t) { return !checkDays[t.date]; }));
+    var withCl = agg(scopedTrades().filter(function (t) { return checkDays[t.date]; }));
+    var without = agg(scopedTrades().filter(function (t) { return !checkDays[t.date]; }));
     if (!withCl.n && !without.n) return null; // no trades to compare yet
     function col(label, a, accent) {
       return h("div", { style: "flex:1;min-width:150px;background:#FBFAF7;border:1px solid #ECE7DD;border-radius:12px;padding:14px 16px;" },
@@ -3022,7 +3068,10 @@
     if (!st) return null;
     var r = buildRow(st);
     var moveUnit = st.type === "option" ? " pts prima" : " pts";
-    var mv = Number(st.exit) - Number(st.entry);
+    // Same directional convention as pnlOf(): for a short, price falling is the
+    // winning direction, so the displayed move must flip sign like the P&L does
+    // — otherwise a winning short shows a "−" move right under a green result.
+    var mv = (Number(st.exit) - Number(st.entry)) * (st.side === "long" ? 1 : -1);
     var movePts = (mv >= 0 ? "+" : "−") + num(Math.abs(mv)) + moveUnit + " × " + st.contracts;
     var instr = st.type === "option" ? "Opción" : "Futuro";
     var note = st.note || "Sin notas.";
@@ -3046,7 +3095,7 @@
             h("div", { style: "font-family:'Geist Mono',monospace;font-size:34px;font-weight:700;letter-spacing:-1.5px;margin-top:4px;" + pnlColor(st.pnl) }, signed(st.pnl)),
             h("div", { style: "font-size:12px;color:#A39E94;margin-top:4px;" }, movePts),
             (Number(st.commission) > 0) ? h("div", { style: "font-size:11.5px;color:#807B72;margin-top:6px;" }, signed(st.pnl + Number(st.commission)) + " bruto − " + money(st.commission) + " comisión") : null,
-            (function () { var ru = rUnitOf(state.trades); return ru > 0 ? h("div", { style: "display:inline-block;margin-top:8px;font-family:'Geist Mono',monospace;font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;" + (st.pnl >= 0 ? "background:#E8F3EC;color:#16915B;" : "background:#FBEAE7;color:#D6483B;") }, rStr(st.pnl / ru) + " · 1R = " + money(ru)) : null; })()),
+            (function () { var ru = rUnitOf(scopedTrades()); return ru > 0 ? h("div", { style: "display:inline-block;margin-top:8px;font-family:'Geist Mono',monospace;font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;" + (st.pnl >= 0 ? "background:#E8F3EC;color:#16915B;" : "background:#FBEAE7;color:#D6483B;") }, rStr(st.pnl / ru) + " · 1R = " + money(ru)) : null; })()),
           h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px;" },
             infoBox("Entrada", num(st.entry)), infoBox("Salida", num(st.exit)),
             infoBox("Contratos", st.contracts), infoBox("Setup", st.setup, "font-size:14px;font-weight:600;")),
@@ -3172,7 +3221,7 @@
     var pnl = valid ? netPnlOf(t, commission) : 0;
     return { valid: valid, pnl: pnl, gross: gross, commission: commission };
   }
-  function isSaveValid() { var d = state.draft; return d.symbol && d.entry !== "" && d.exit !== "" && Number(d.contracts) > 0 && commissionValid(d) && !!d.date && d.date <= todayISO(); }
+  function isSaveValid() { var d = state.draft; return d.symbol && d.entry !== "" && d.exit !== "" && Number(d.entry) > 0 && Number(d.exit) > 0 && Number(d.contracts) > 0 && commissionValid(d) && !!d.date && d.date <= todayISO(); }
 
   function modalFrame(title, onClose, bodyChildren, footerChildren, width) {
     var modal = h("div", { class: "dc-modal", style: "position:relative;width:" + (width || 540) + "px;max-width:100%;max-height:92vh;overflow-y:auto;background:#fff;border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,.22);" },
@@ -3315,8 +3364,8 @@
         field("Dirección", fieldSelect(d, "side", [["long", "Largo"], ["short", "Corto"]], refresh))),
       h("div", { style: "display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;" },
         field("Contratos", fieldInput(d, "contracts", { type: "number", min: "1", style: inMono, onInput: function (e) { d.contracts = e.target.value; refresh(); } })),
-        field("Entrada", fieldInput(d, "entry", { type: "number", step: "0.01", placeholder: "0.00", style: inMono, onInput: function (e) { d.entry = e.target.value; refresh(); } })),
-        field("Salida", fieldInput(d, "exit", { type: "number", step: "0.01", placeholder: "0.00", style: inMono, onInput: function (e) { d.exit = e.target.value; refresh(); } }))),
+        field("Entrada", fieldInput(d, "entry", { type: "number", step: "0.01", min: "0.01", placeholder: "0.00", style: inMono, onInput: function (e) { d.entry = e.target.value; refresh(); } })),
+        field("Salida", fieldInput(d, "exit", { type: "number", step: "0.01", min: "0.01", placeholder: "0.00", style: inMono, onInput: function (e) { d.exit = e.target.value; refresh(); } }))),
       h("div", { style: "display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;" },
         field("Setup", fieldSelect(d, "setup", SETUPS.map(function (x) { return [x, x]; }))),
         field("Emoción", fieldSelect(d, "emotion", [["Tranquilo", "Tranquilo"], ["Confiado", "Confiado"], ["Ansioso", "Ansioso"], ["FOMO", "FOMO"]])),
