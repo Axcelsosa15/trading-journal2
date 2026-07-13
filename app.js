@@ -1498,8 +1498,10 @@
     var downside = Math.sqrt(mean(pnls.map(function (x) { var m = Math.min(x, 0); return m * m; })));
     var sortino = downside > 0 ? mean(pnls) / downside : 0;
     // Kelly uses win probability among decisive trades (exclude breakevens), W − (1−W)/R.
+    // When payoff is Infinity (no losses yet), the formula's own limit as R→∞ is wKelly,
+    // not 0 — a zero-loss sample is the best case for Kelly, not the worst.
     var wKelly = (wins.length + losses.length) ? wins.length / (wins.length + losses.length) : 0;
-    var kelly = payoff > 0 && isFinite(payoff) ? (wKelly - (1 - wKelly) / payoff) : 0; if (kelly < 0) kelly = 0;
+    var kelly = payoff > 0 ? (isFinite(payoff) ? (wKelly - (1 - wKelly) / payoff) : wKelly) : 0; if (kelly < 0) kelly = 0;
     // streaks + drawdown over chronological equity
     var chrono = rows.slice().sort(byDateAsc);
     var maxW = 0, maxL = 0, cw = 0, cl = 0;
