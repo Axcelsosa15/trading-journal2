@@ -551,9 +551,12 @@
     if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
     var headers = ["Fecha", "Hora UTC", "Sesión", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "MAE", "MFE", "Setup", "Emoción", "Valoración", "Cuenta", "PnL bruto", "Comisión", "PnL neto", "R", "Etiquetas", "Notas"];
     var lines = [headers.map(csvCell).join(",")];
-    // 1R = average loss of the exported set, same convention used everywhere
-    // else in the app (dashboard R-multiple stat, R distribution chart).
-    var ru = rUnitOf(rows);
+    // 1R baseline must come from the full account scope, not the filtered
+    // rows being exported — filtering to e.g. "Ganadoras" before exporting
+    // would drop every loss from the baseline and silently rebase every
+    // exported R value, unlike the dashboard stat/R chart which always use
+    // rUnitOf(scopedTrades()).
+    var ru = rUnitOf(scopedTrades());
     rows.forEach(function (t) {
       var commission = Number(t.commission) || 0;
       var rMultiple = ru > 0 ? (t.pnl / ru).toFixed(2) : "";
@@ -813,7 +816,7 @@
     var m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/); // ISO-ish YYYY-MM-DD
     if (m) {
       if (!validDate(+m[1], +m[2], +m[3])) return null;
-      return m[1] + "-" + pad(m[2]) + "-" + pad(m[3]);
+      return m[1] + "-" + pad(+m[2]) + "-" + pad(+m[3]);
     }
     m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/); // D/M/Y or M/D/Y
     if (m) {
@@ -851,6 +854,10 @@
     function get(k) { var i = map[k]; return i != null && i >= 0 ? cells[i] : ""; }
     var date = importDate(get("date"), dateOrder);
     if (!date) return { error: "fecha inválida" };
+    // Same future-date guard manual entry enforces in saveTrade() — CSV import
+    // shouldn't let a broker-export typo or bad timestamp slip a future trade
+    // past riskStatus(), the calendar view and streak calculations.
+    if (date > todayISO()) return { error: "fecha futura" };
     var symbol = String(get("symbol") || "").trim().toUpperCase();
     if (!symbol) return { error: "símbolo vacío" };
     var side = importSide(get("side"));
@@ -1019,7 +1026,14 @@
     state.restore.busy = true; renderModal();
     try {
       var accounts = (Array.isArray(data.accounts) ? data.accounts : []).filter(function (a) { return a && a.id; });
-      var trades = (Array.isArray(data.trades) ? data.trades : []).filter(function (t) { return t && t.id; });
+      // Same date guard as CSV import/manual entry: a corrupt or hand-edited
+      // backup shouldn't be able to plant a future-dated or malformed-date
+      // trade that then pollutes riskStatus(), the calendar view and streaks.
+      var trades = (Array.isArray(data.trades) ? data.trades : []).filter(function (t) {
+        if (!t || !t.id) return false;
+        var dm = String(t.date || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        return !!dm && validDate(+dm[1], +dm[2], +dm[3]) && t.date <= todayISO();
+      });
       var journal = (Array.isArray(data.journal) ? data.journal : []).filter(function (j) { return j && j.id; });
       // Accounts before trades: trades.account_id is a foreign key into accounts.
       if (accounts.length) {
@@ -1499,7 +1513,10 @@
     var sortino = downside > 0 ? mean(pnls) / downside : 0;
     // Kelly uses win probability among decisive trades (exclude breakevens), W − (1−W)/R.
     var wKelly = (wins.length + losses.length) ? wins.length / (wins.length + losses.length) : 0;
-    var kelly = payoff > 0 && isFinite(payoff) ? (wKelly - (1 - wKelly) / payoff) : 0; if (kelly < 0) kelly = 0;
+    // payoff can be Infinity (zero losing trades) — (1-wKelly)/Infinity still
+    // evaluates to a finite 0 there, so don't reject it with isFinite(payoff),
+    // or a perfect winning streak wrongly reports 0% instead of ~100%.
+    var kelly = payoff > 0 ? (wKelly - (1 - wKelly) / payoff) : 0; if (kelly < 0) kelly = 0;
     // streaks + drawdown over chronological equity
     var chrono = rows.slice().sort(byDateAsc);
     var maxW = 0, maxL = 0, cw = 0, cl = 0;
