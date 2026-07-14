@@ -3229,7 +3229,9 @@
   function draftPnl() {
     var d = state.draft;
     var valid = d.entry !== "" && d.exit !== "" && commissionValid(d);
-    var t = { symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts) || 0, entry: Number(d.entry), exit: Number(d.exit) };
+    // Round contracts the same way saveTrade() does, so the live preview
+    // never shows a P&L the app won't actually persist.
+    var t = { symbol: d.symbol, type: d.type, side: d.side, contracts: Math.round(Number(d.contracts)) || 0, entry: Number(d.entry), exit: Number(d.exit) };
     var commission = d.commission === "" || d.commission == null ? 0 : Number(d.commission);
     var gross = valid ? pnlOf(t) : 0;
     var pnl = valid ? netPnlOf(t, commission) : 0;
