@@ -851,6 +851,7 @@
     function get(k) { var i = map[k]; return i != null && i >= 0 ? cells[i] : ""; }
     var date = importDate(get("date"), dateOrder);
     if (!date) return { error: "fecha inválida" };
+    if (date > todayISO()) return { error: "fecha futura" };
     var symbol = String(get("symbol") || "").trim().toUpperCase();
     if (!symbol) return { error: "símbolo vacío" };
     var side = importSide(get("side"));
@@ -1029,8 +1030,19 @@
         var ar = await SB.from("accounts").upsert(accRows, { onConflict: "id" }).select();
         if (ar.error) throw ar.error;
       }
-      if (trades.length) {
-        var tRows = trades.map(function (t) {
+      // Same guarantees manual entry and CSV import already enforce (real
+      // calendar date, not in the future, positive entry/exit) — a hand-edited
+      // or corrupted backup file shouldn't be able to reintroduce data that both
+      // other entry points now reject.
+      var skippedTrades = 0;
+      var validTrades = trades.filter(function (t) {
+        var dm = String(t.date || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        var ok = dm && validDate(+dm[1], +dm[2], +dm[3]) && t.date <= todayISO() && Number(t.entry) > 0 && Number(t.exit) > 0;
+        if (!ok) skippedTrades++;
+        return ok;
+      });
+      if (validTrades.length) {
+        var tRows = validTrades.map(function (t) {
           return { id: t.id, date: t.date, time: t.time || null, symbol: t.symbol, type: t.type, side: t.side, contracts: Number(t.contracts), entry: Number(t.entry), exit: Number(t.exit), setup: t.setup, emotion: t.emotion, rating: Number(t.rating) || 3, note: t.note || "", pnl: Number(t.pnl) || 0, commission: t.commission == null ? 0 : Number(t.commission), account_id: t.account_id || null, tags: Array.isArray(t.tags) ? t.tags : [], mae: t.mae === "" || t.mae == null ? null : Number(t.mae), mfe: t.mfe === "" || t.mfe == null ? null : Number(t.mfe), screenshot_path: t.screenshot_path || null };
         });
         var tr = await SB.from("trades").upsert(tRows, { onConflict: "id" }).select();
@@ -1044,7 +1056,7 @@
       if (data.settings) { applySettings(data.settings); await saveSettings(); }
       state.showRestore = false; state.restore = null;
       await loadData();
-      window.alert("Backup restaurado correctamente.");
+      window.alert("Backup restaurado correctamente." + (skippedTrades ? " (" + skippedTrades + " operación(es) omitida(s) por datos inválidos.)" : ""));
     } catch (e) {
       state.restore.busy = false;
       state.restore.error = "No se pudo restaurar: " + (e && e.message ? e.message : "error desconocido");
