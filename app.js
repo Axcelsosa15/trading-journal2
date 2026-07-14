@@ -847,7 +847,7 @@
     return null;
   }
   // Build a DB row from a CSV record + column mapping. Returns {row} or {error}.
-  function buildImportRow(cells, map, dateOrder) {
+  function buildImportRow(cells, map, dateOrder, scopeAccountId) {
     function get(k) { var i = map[k]; return i != null && i >= 0 ? cells[i] : ""; }
     var date = importDate(get("date"), dateOrder);
     if (!date) return { error: "fecha inválida" };
@@ -876,7 +876,7 @@
     // only computed-from-price P&L subtracts the imported commission.
     var pnl = map.pnl >= 0 && !isNaN(importNum(get("pnl"))) ? Math.round(importNum(get("pnl")))
       : netPnlOf({ symbol: symbol, type: type, side: side, contracts: contracts, entry: entry, exit: exit }, commission);
-    var acctId = null, acctAmbiguous = false;
+    var acctId = null, acctAmbiguous = false, acctUnmatched = false;
     if (map.account >= 0) {
       var an = String(get("account") || "").trim().toLowerCase();
       if (an) {
@@ -886,7 +886,15 @@
         var matches = state.accounts.filter(function (a) { return a.name.toLowerCase() === an; });
         if (matches.length === 1) acctId = matches[0].id;
         else if (matches.length > 1) acctAmbiguous = true;
+        else acctUnmatched = true;
       }
+    }
+    // No column, or a name that matched nothing: if the user is importing while
+    // scoped into a single account, assume that's where these trades belong
+    // instead of silently dropping them into "Sin cuenta".
+    var acctScoped = false;
+    if (acctId == null && !acctAmbiguous && scopeAccountId && scopeAccountId !== "all") {
+      acctId = scopeAccountId; acctScoped = true; acctUnmatched = false;
     }
     var timeVal = map.time >= 0 ? String(get("time") || "").trim() : "";
     return {
@@ -899,6 +907,8 @@
         pnl: pnl, commission: commission, account_id: acctId, tags: tags, mae: mae, mfe: mfe,
       },
       acctAmbiguous: acctAmbiguous,
+      acctUnmatched: acctUnmatched,
+      acctScoped: acctScoped,
     };
   }
   // Identity key for duplicate detection: same date/symbol/side/size/entry/exit
@@ -912,23 +922,25 @@
   // repeated within the same CSV).
   function importPreview() {
     var im = state.import;
-    if (!im || !im.rows.length) return { valid: [], invalid: 0, errors: [], dupCount: 0, acctAmbiguous: 0 };
-    var valid = [], invalid = 0, errors = [], dupCount = 0, acctAmbiguous = 0;
+    if (!im || !im.rows.length) return { valid: [], invalid: 0, errors: [], dupCount: 0, acctAmbiguous: 0, acctUnmatched: 0, acctScoped: 0 };
+    var valid = [], invalid = 0, errors = [], dupCount = 0, acctAmbiguous = 0, acctUnmatched = 0, acctScoped = 0;
     var existingKeys = {};
     state.trades.forEach(function (t) { existingKeys[tradeDupKey(t)] = true; });
     var seenInFile = {};
     var dateOrder = (im.dateFormat === "dmy" || im.dateFormat === "mdy") ? im.dateFormat : detectDateOrder(im.rows.slice(1), im.map.date);
     im.rows.slice(1).forEach(function (cells, n) {
-      var r = buildImportRow(cells, im.map, dateOrder);
+      var r = buildImportRow(cells, im.map, dateOrder, state.scopeAccount);
       if (r.row) {
         var key = tradeDupKey(r.row);
         if (existingKeys[key] || seenInFile[key]) dupCount++;
         seenInFile[key] = true;
         if (r.acctAmbiguous) acctAmbiguous++;
+        if (r.acctUnmatched) acctUnmatched++;
+        if (r.acctScoped) acctScoped++;
         valid.push(r.row);
       } else { invalid++; if (errors.length < 5) errors.push("Fila " + (n + 2) + ": " + r.error); }
     });
-    return { valid: valid, invalid: invalid, errors: errors, dupCount: dupCount, acctAmbiguous: acctAmbiguous };
+    return { valid: valid, invalid: invalid, errors: errors, dupCount: dupCount, acctAmbiguous: acctAmbiguous, acctUnmatched: acctUnmatched, acctScoped: acctScoped };
   }
   async function runImport() {
     var prev = importPreview();
@@ -3333,6 +3345,8 @@
         prev.invalid ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.invalid + " fila(s) con error se omitirán") : null,
         prev.dupCount ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.dupCount + " fila(s) parecen duplicadas (misma fecha, símbolo, dirección, contratos, entrada y salida) — se importarán igual; revísalas antes de confirmar.") : null,
         prev.acctAmbiguous ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.acctAmbiguous + " fila(s) con nombre de cuenta que coincide con más de una cuenta tuya — se importarán sin cuenta asignada; asígnalas manualmente después.") : null,
+        prev.acctUnmatched ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.acctUnmatched + " fila(s) con nombre de cuenta que no coincide con ninguna de tus cuentas — se importarán sin cuenta asignada; asígnalas manualmente después.") : null,
+        prev.acctScoped ? h("div", { style: "color:#8A8578;margin-top:3px;" }, prev.acctScoped + " fila(s) sin cuenta identificada se asignarán a \"" + (accountName(state.scopeAccount) || "la cuenta actual") + "\" (la cuenta que tienes seleccionada ahora).") : null,
         prev.errors.length ? h("div", { style: "margin-top:6px;color:#A39E94;font-size:12px;font-family:'Geist Mono',monospace;white-space:pre-line;" }, prev.errors.join("\n")) : null));
     }
     var canImport = !im.busy && prev && prev.valid.length > 0;
