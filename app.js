@@ -559,7 +559,7 @@
     rows.forEach(function (t) {
       var commission = Number(t.commission) || 0;
       var rMultiple = ru > 0 ? (t.pnl / ru).toFixed(2) : "";
-      lines.push([t.date, t.time || "", sessionOf(t.time) || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.mae === "" ? "" : t.mae, t.mfe === "" ? "" : t.mfe, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl + commission, commission, t.pnl, rMultiple, (t.tags || []).join(" "), t.note].map(csvCell).join(","));
+      lines.push([t.date, t.time || "", sessionOf(t.time) || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.mae === "" ? "" : t.mae, t.mfe === "" ? "" : t.mfe, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl + commission, commission, t.pnl, rMultiple, (t.tags || []).join(", "), t.note].map(csvCell).join(","));
     });
     var csv = "﻿" + lines.join("\r\n"); // BOM so Excel reads accents correctly
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -815,7 +815,7 @@
     var m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/); // ISO-ish YYYY-MM-DD
     if (m) {
       if (!validDate(+m[1], +m[2], +m[3])) return null;
-      return m[1] + "-" + pad(m[2]) + "-" + pad(m[3]);
+      return m[1] + "-" + pad(+m[2]) + "-" + pad(+m[3]);
     }
     m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/); // D/M/Y or M/D/Y
     if (m) {
@@ -865,10 +865,10 @@
     var maeRaw = map.mae >= 0 ? importNum(get("mae")) : NaN;
     var mfeRaw = map.mfe >= 0 ? importNum(get("mfe")) : NaN;
     var mae = isNaN(maeRaw) ? null : maeRaw, mfe = isNaN(mfeRaw) ? null : mfeRaw;
-    // Export joins tags with a plain space (exportCSV), not a comma — split the
-    // same way on import so a re-imported export round-trips instead of the
-    // whole cell collapsing into one tag.
-    var tags = map.tags >= 0 ? String(get("tags") || "").trim().split(/\s+/).filter(Boolean) : [];
+    // Export joins tags with ", " (exportCSV), same convention as manual entry
+    // (parseTags) — reuse it here too so a multi-word tag ("NY open") survives
+    // the round-trip instead of being split on every space.
+    var tags = map.tags >= 0 ? parseTags(get("tags")) : [];
     var type = map.type >= 0 ? importType(get("type")) : "future";
     var ratingRaw = map.rating >= 0 ? Math.round(importNum(get("rating"))) : 3;
     var rating = ratingRaw >= 1 && ratingRaw <= 5 ? ratingRaw : 3;
@@ -895,7 +895,7 @@
     // scoped into a single account, assume that's where these trades belong
     // instead of silently dropping them into "Sin cuenta".
     var acctScoped = false;
-    if (acctId == null && !acctAmbiguous && scopeAccountId && scopeAccountId !== "all") {
+    if (acctId == null && !acctAmbiguous && scopeAccountId && scopeAccountId !== "all" && scopeAccountId !== "none") {
       acctId = scopeAccountId; acctScoped = true; acctUnmatched = false;
     }
     var timeVal = map.time >= 0 ? String(get("time") || "").trim() : "";
@@ -1917,7 +1917,7 @@
         navItem("settings", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', "Ajustes")),
       h("div", { class: "side-foot", style: "margin-top:auto;display:flex;flex-direction:column;gap:12px;" },
         h("div", { style: "border:1px solid #ECE7DD;border-radius:12px;padding:14px;background:#FBFAF7;" },
-          h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, state.accounts.length ? ("Balance total" + (balInfo.currency && balInfo.currency !== "USD" ? " (" + balInfo.currency + ")" : "")) : "P&L acumulado"),
+          h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, balInfo.total != null ? ("Balance total" + (balInfo.currency && balInfo.currency !== "USD" ? " (" + balInfo.currency + ")" : "")) : "P&L acumulado"),
           h("div", { style: "font-family:'Geist Mono',monospace;font-size:21px;font-weight:600;margin-top:6px;letter-spacing:-0.5px;" + (acctBal < 0 ? "color:#D6483B;" : "") }, (acctBal < 0 ? "−" : "") + money(acctBal)),
           balInfo.excluded ? h("div", { style: "font-size:10.5px;color:#A39E94;margin-top:2px;" }, balInfo.excluded + " cuenta(s) en otra moneda no incluida(s)") : null,
           h("div", { style: "display:flex;align-items:center;gap:6px;margin-top:8px;" },
@@ -3251,7 +3251,7 @@
     var pnl = valid ? netPnlOf(t, commission) : 0;
     return { valid: valid, pnl: pnl, gross: gross, commission: commission };
   }
-  function isSaveValid() { var d = state.draft; return d.symbol && d.entry !== "" && d.exit !== "" && Number(d.entry) > 0 && Number(d.exit) > 0 && Number(d.contracts) > 0 && commissionValid(d) && !!d.date && d.date <= todayISO(); }
+  function isSaveValid() { var d = state.draft; return d.symbol && d.entry !== "" && d.exit !== "" && Number(d.entry) > 0 && Number(d.exit) > 0 && Math.round(Number(d.contracts)) > 0 && commissionValid(d) && !!d.date && d.date <= todayISO(); }
 
   function modalFrame(title, onClose, bodyChildren, footerChildren, width) {
     var modal = h("div", { class: "dc-modal", style: "position:relative;width:" + (width || 540) + "px;max-width:100%;max-height:92vh;overflow-y:auto;background:#fff;border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,.22);" },
