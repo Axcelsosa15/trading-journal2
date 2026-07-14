@@ -551,9 +551,12 @@
     if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
     var headers = ["Fecha", "Hora UTC", "Sesión", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "MAE", "MFE", "Setup", "Emoción", "Valoración", "Cuenta", "PnL bruto", "Comisión", "PnL neto", "R", "Etiquetas", "Notas"];
     var lines = [headers.map(csvCell).join(",")];
-    // 1R = average loss of the exported set, same convention used everywhere
-    // else in the app (dashboard R-multiple stat, R distribution chart).
-    var ru = rUnitOf(rows);
+    // 1R = average loss of the full scoped trade set, same baseline used
+    // everywhere else in the app (dashboard R-multiple stat, R distribution
+    // chart) — NOT the possibly-filtered `rows` being exported, or filtering
+    // to e.g. "Ganadoras" before exporting would drop all losses out of the
+    // baseline and silently rebase every R value to average-win-size instead.
+    var ru = rUnitOf(scopedTrades());
     rows.forEach(function (t) {
       var commission = Number(t.commission) || 0;
       var rMultiple = ru > 0 ? (t.pnl / ru).toFixed(2) : "";
@@ -813,7 +816,11 @@
     var m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/); // ISO-ish YYYY-MM-DD
     if (m) {
       if (!validDate(+m[1], +m[2], +m[3])) return null;
-      return m[1] + "-" + pad(m[2]) + "-" + pad(m[3]);
+      // pad() does a numeric "< 10" comparison but string-concatenates: fed the
+      // raw regex-match strings (already 2 chars for a zero-padded month/day,
+      // e.g. "07"), pad("07") returns "007" — corrupting a completely normal
+      // ISO date like "2026-07-14" into "2026-007-14". Coerce to Number first.
+      return m[1] + "-" + pad(+m[2]) + "-" + pad(+m[3]);
     }
     m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/); // D/M/Y or M/D/Y
     if (m) {
@@ -851,6 +858,10 @@
     function get(k) { var i = map[k]; return i != null && i >= 0 ? cells[i] : ""; }
     var date = importDate(get("date"), dateOrder);
     if (!date) return { error: "fecha inválida" };
+    // Same rule as manual entry (isSaveValid/saveTrade): a future date can't be a
+    // real fill yet, and letting it through here (but not the Add-Trade form)
+    // would corrupt the calendar view and "current month" dashboard buckets.
+    if (date > todayISO()) return { error: "fecha futura" };
     var symbol = String(get("symbol") || "").trim().toUpperCase();
     if (!symbol) return { error: "símbolo vacío" };
     var side = importSide(get("side"));
