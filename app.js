@@ -551,9 +551,11 @@
     if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
     var headers = ["Fecha", "Hora UTC", "Sesión", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "MAE", "MFE", "Setup", "Emoción", "Valoración", "Cuenta", "PnL bruto", "Comisión", "PnL neto", "R", "Etiquetas", "Notas"];
     var lines = [headers.map(csvCell).join(",")];
-    // 1R = average loss of the exported set, same convention used everywhere
-    // else in the app (dashboard R-multiple stat, R distribution chart).
-    var ru = rUnitOf(rows);
+    // 1R = average loss across the account's full scope (not just the rows
+    // being exported), same convention used everywhere else in the app
+    // (trade-detail drawer, dashboard R-multiple stat, R distribution chart)
+    // so a filtered export doesn't silently change what "R" means.
+    var ru = rUnitOf(scopedTrades());
     rows.forEach(function (t) {
       var commission = Number(t.commission) || 0;
       var rMultiple = ru > 0 ? (t.pnl / ru).toFixed(2) : "";
@@ -1890,7 +1892,7 @@
       h("div", { class: "side-foot", style: "margin-top:auto;display:flex;flex-direction:column;gap:12px;" },
         h("div", { style: "border:1px solid #ECE7DD;border-radius:12px;padding:14px;background:#FBFAF7;" },
           h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, state.accounts.length ? ("Balance total" + (balInfo.currency && balInfo.currency !== "USD" ? " (" + balInfo.currency + ")" : "")) : "P&L acumulado"),
-          h("div", { style: "font-family:'Geist Mono',monospace;font-size:21px;font-weight:600;margin-top:6px;letter-spacing:-0.5px;" }, money(acctBal)),
+          h("div", { style: "font-family:'Geist Mono',monospace;font-size:21px;font-weight:600;margin-top:6px;letter-spacing:-0.5px;" + (acctBal < 0 ? "color:#D6483B;" : "") }, (acctBal < 0 ? "−" : "") + money(acctBal)),
           balInfo.excluded ? h("div", { style: "font-size:10.5px;color:#A39E94;margin-top:2px;" }, balInfo.excluded + " cuenta(s) en otra moneda no incluida(s)") : null,
           h("div", { style: "display:flex;align-items:center;gap:6px;margin-top:8px;" },
             h("span", { style: "font-size:11px;color:#807B72;" }, "Hoy"),
@@ -2534,9 +2536,9 @@
     if (!scopedTrades().length) {
       return h("div", { style: "max-width:1180px;margin:0 auto;" }, emptyCard("Sin datos para analizar", "Registra operaciones y aquí verás tu curva de capital y tu rendimiento por día, emoción y símbolo."));
     }
-    var wdNames = ["Lun", "Mar", "Mié", "Jue", "Vie"], wdG = {};
+    var wdNames = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"], wdG = {};
     wdNames.forEach(function (w) { wdG[w] = 0; });
-    scopedTrades().forEach(function (t) { var dow = new Date(t.date + "T12:00:00").getDay(); var idx = dow - 1; if (idx >= 0 && idx < 5) wdG[wdNames[idx]] += t.pnl; });
+    scopedTrades().forEach(function (t) { var dow = new Date(t.date + "T12:00:00").getDay(); var idx = (dow + 6) % 7; wdG[wdNames[idx]] += t.pnl; });
     var weekdayData = wdNames.map(function (w) { return { label: w, value: wdG[w] }; });
     var emoOrder = ["Tranquilo", "Confiado", "Ansioso", "FOMO"], emoG = group(function (t) { return t.emotion; });
     var emotionData = emoOrder.filter(function (k) { return emoG[k]; }).map(function (k) { return { label: k, value: emoG[k].pnl }; });
