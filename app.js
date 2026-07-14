@@ -551,13 +551,15 @@
     if (!rows || !rows.length) { window.alert("No hay operaciones para exportar."); return; }
     var headers = ["Fecha", "Hora UTC", "Sesión", "Símbolo", "Instrumento", "Dirección", "Contratos", "Entrada", "Salida", "MAE", "MFE", "Setup", "Emoción", "Valoración", "Cuenta", "PnL bruto", "Comisión", "PnL neto", "R", "Etiquetas", "Notas"];
     var lines = [headers.map(csvCell).join(",")];
-    // 1R = average loss of the exported set, same convention used everywhere
-    // else in the app (dashboard R-multiple stat, R distribution chart).
-    var ru = rUnitOf(rows);
+    // 1R = average loss across the account's full scope (not just the rows
+    // being exported), same convention used everywhere else in the app
+    // (trade-detail drawer, dashboard R-multiple stat, R distribution chart)
+    // so a filtered export doesn't silently change what "R" means.
+    var ru = rUnitOf(scopedTrades());
     rows.forEach(function (t) {
       var commission = Number(t.commission) || 0;
       var rMultiple = ru > 0 ? (t.pnl / ru).toFixed(2) : "";
-      lines.push([t.date, t.time || "", sessionOf(t.time) || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.mae === "" ? "" : t.mae, t.mfe === "" ? "" : t.mfe, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl + commission, commission, t.pnl, rMultiple, (t.tags || []).join(" "), t.note].map(csvCell).join(","));
+      lines.push([t.date, t.time || "", sessionOf(t.time) || "", t.symbol, (t.type === "option" ? "Opción" : "Futuro"), (t.side === "long" ? "Largo" : "Corto"), t.contracts, t.entry, t.exit, t.mae === "" ? "" : t.mae, t.mfe === "" ? "" : t.mfe, t.setup, t.emotion, t.rating, accountName(t.account_id) || "", t.pnl + commission, commission, t.pnl, rMultiple, (t.tags || []).join(", "), t.note].map(csvCell).join(","));
     });
     var csv = "﻿" + lines.join("\r\n"); // BOM so Excel reads accents correctly
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -813,7 +815,7 @@
     var m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/); // ISO-ish YYYY-MM-DD
     if (m) {
       if (!validDate(+m[1], +m[2], +m[3])) return null;
-      return m[1] + "-" + pad(m[2]) + "-" + pad(m[3]);
+      return m[1] + "-" + pad(+m[2]) + "-" + pad(+m[3]);
     }
     m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/); // D/M/Y or M/D/Y
     if (m) {
@@ -847,10 +849,11 @@
     return null;
   }
   // Build a DB row from a CSV record + column mapping. Returns {row} or {error}.
-  function buildImportRow(cells, map, dateOrder) {
+  function buildImportRow(cells, map, dateOrder, scopeAccountId) {
     function get(k) { var i = map[k]; return i != null && i >= 0 ? cells[i] : ""; }
     var date = importDate(get("date"), dateOrder);
     if (!date) return { error: "fecha inválida" };
+    if (date > todayISO()) return { error: "fecha futura" };
     var symbol = String(get("symbol") || "").trim().toUpperCase();
     if (!symbol) return { error: "símbolo vacío" };
     var side = importSide(get("side"));
@@ -862,10 +865,10 @@
     var maeRaw = map.mae >= 0 ? importNum(get("mae")) : NaN;
     var mfeRaw = map.mfe >= 0 ? importNum(get("mfe")) : NaN;
     var mae = isNaN(maeRaw) ? null : maeRaw, mfe = isNaN(mfeRaw) ? null : mfeRaw;
-    // Export joins tags with a plain space (exportCSV), not a comma — split the
-    // same way on import so a re-imported export round-trips instead of the
-    // whole cell collapsing into one tag.
-    var tags = map.tags >= 0 ? String(get("tags") || "").trim().split(/\s+/).filter(Boolean) : [];
+    // Export joins tags with ", " (exportCSV), same convention as manual entry
+    // (parseTags) — reuse it here too so a multi-word tag ("NY open") survives
+    // the round-trip instead of being split on every space.
+    var tags = map.tags >= 0 ? parseTags(get("tags")) : [];
     var type = map.type >= 0 ? importType(get("type")) : "future";
     var ratingRaw = map.rating >= 0 ? Math.round(importNum(get("rating"))) : 3;
     var rating = ratingRaw >= 1 && ratingRaw <= 5 ? ratingRaw : 3;
@@ -875,7 +878,7 @@
     // only computed-from-price P&L subtracts the imported commission.
     var pnl = map.pnl >= 0 && !isNaN(importNum(get("pnl"))) ? Math.round(importNum(get("pnl")))
       : netPnlOf({ symbol: symbol, type: type, side: side, contracts: contracts, entry: entry, exit: exit }, commission);
-    var acctId = null, acctAmbiguous = false;
+    var acctId = null, acctAmbiguous = false, acctUnmatched = false;
     if (map.account >= 0) {
       var an = String(get("account") || "").trim().toLowerCase();
       if (an) {
@@ -885,7 +888,15 @@
         var matches = state.accounts.filter(function (a) { return a.name.toLowerCase() === an; });
         if (matches.length === 1) acctId = matches[0].id;
         else if (matches.length > 1) acctAmbiguous = true;
+        else acctUnmatched = true;
       }
+    }
+    // No column, or a name that matched nothing: if the user is importing while
+    // scoped into a single account, assume that's where these trades belong
+    // instead of silently dropping them into "Sin cuenta".
+    var acctScoped = false;
+    if (acctId == null && !acctAmbiguous && scopeAccountId && scopeAccountId !== "all" && scopeAccountId !== "none") {
+      acctId = scopeAccountId; acctScoped = true; acctUnmatched = false;
     }
     var timeVal = map.time >= 0 ? String(get("time") || "").trim() : "";
     return {
@@ -898,6 +909,8 @@
         pnl: pnl, commission: commission, account_id: acctId, tags: tags, mae: mae, mfe: mfe,
       },
       acctAmbiguous: acctAmbiguous,
+      acctUnmatched: acctUnmatched,
+      acctScoped: acctScoped,
     };
   }
   // Identity key for duplicate detection: same date/symbol/side/size/entry/exit
@@ -911,23 +924,25 @@
   // repeated within the same CSV).
   function importPreview() {
     var im = state.import;
-    if (!im || !im.rows.length) return { valid: [], invalid: 0, errors: [], dupCount: 0, acctAmbiguous: 0 };
-    var valid = [], invalid = 0, errors = [], dupCount = 0, acctAmbiguous = 0;
+    if (!im || !im.rows.length) return { valid: [], invalid: 0, errors: [], dupCount: 0, acctAmbiguous: 0, acctUnmatched: 0, acctScoped: 0 };
+    var valid = [], invalid = 0, errors = [], dupCount = 0, acctAmbiguous = 0, acctUnmatched = 0, acctScoped = 0;
     var existingKeys = {};
     state.trades.forEach(function (t) { existingKeys[tradeDupKey(t)] = true; });
     var seenInFile = {};
     var dateOrder = (im.dateFormat === "dmy" || im.dateFormat === "mdy") ? im.dateFormat : detectDateOrder(im.rows.slice(1), im.map.date);
     im.rows.slice(1).forEach(function (cells, n) {
-      var r = buildImportRow(cells, im.map, dateOrder);
+      var r = buildImportRow(cells, im.map, dateOrder, state.scopeAccount);
       if (r.row) {
         var key = tradeDupKey(r.row);
         if (existingKeys[key] || seenInFile[key]) dupCount++;
         seenInFile[key] = true;
         if (r.acctAmbiguous) acctAmbiguous++;
+        if (r.acctUnmatched) acctUnmatched++;
+        if (r.acctScoped) acctScoped++;
         valid.push(r.row);
       } else { invalid++; if (errors.length < 5) errors.push("Fila " + (n + 2) + ": " + r.error); }
     });
-    return { valid: valid, invalid: invalid, errors: errors, dupCount: dupCount, acctAmbiguous: acctAmbiguous };
+    return { valid: valid, invalid: invalid, errors: errors, dupCount: dupCount, acctAmbiguous: acctAmbiguous, acctUnmatched: acctUnmatched, acctScoped: acctScoped };
   }
   async function runImport() {
     var prev = importPreview();
@@ -1029,8 +1044,19 @@
         var ar = await SB.from("accounts").upsert(accRows, { onConflict: "id" }).select();
         if (ar.error) throw ar.error;
       }
-      if (trades.length) {
-        var tRows = trades.map(function (t) {
+      // Same guarantees manual entry and CSV import already enforce (real
+      // calendar date, not in the future, positive entry/exit) — a hand-edited
+      // or corrupted backup file shouldn't be able to reintroduce data that both
+      // other entry points now reject.
+      var skippedTrades = 0;
+      var validTrades = trades.filter(function (t) {
+        var dm = String(t.date || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        var ok = dm && validDate(+dm[1], +dm[2], +dm[3]) && t.date <= todayISO() && Number(t.entry) > 0 && Number(t.exit) > 0;
+        if (!ok) skippedTrades++;
+        return ok;
+      });
+      if (validTrades.length) {
+        var tRows = validTrades.map(function (t) {
           return { id: t.id, date: t.date, time: t.time || null, symbol: t.symbol, type: t.type, side: t.side, contracts: Number(t.contracts), entry: Number(t.entry), exit: Number(t.exit), setup: t.setup, emotion: t.emotion, rating: Number(t.rating) || 3, note: t.note || "", pnl: Number(t.pnl) || 0, commission: t.commission == null ? 0 : Number(t.commission), account_id: t.account_id || null, tags: Array.isArray(t.tags) ? t.tags : [], mae: t.mae === "" || t.mae == null ? null : Number(t.mae), mfe: t.mfe === "" || t.mfe == null ? null : Number(t.mfe), screenshot_path: t.screenshot_path || null };
         });
         var tr = await SB.from("trades").upsert(tRows, { onConflict: "id" }).select();
@@ -1044,7 +1070,7 @@
       if (data.settings) { applySettings(data.settings); await saveSettings(); }
       state.showRestore = false; state.restore = null;
       await loadData();
-      window.alert("Backup restaurado correctamente.");
+      window.alert("Backup restaurado correctamente." + (skippedTrades ? " (" + skippedTrades + " operación(es) omitida(s) por datos inválidos.)" : ""));
     } catch (e) {
       state.restore.busy = false;
       state.restore.error = "No se pudo restaurar: " + (e && e.message ? e.message : "error desconocido");
@@ -1498,8 +1524,10 @@
     var downside = Math.sqrt(mean(pnls.map(function (x) { var m = Math.min(x, 0); return m * m; })));
     var sortino = downside > 0 ? mean(pnls) / downside : 0;
     // Kelly uses win probability among decisive trades (exclude breakevens), W − (1−W)/R.
+    // When payoff is Infinity (no losses yet), the formula's own limit as R→∞ is wKelly,
+    // not 0 — a zero-loss sample is the best case for Kelly, not the worst.
     var wKelly = (wins.length + losses.length) ? wins.length / (wins.length + losses.length) : 0;
-    var kelly = payoff > 0 && isFinite(payoff) ? (wKelly - (1 - wKelly) / payoff) : 0; if (kelly < 0) kelly = 0;
+    var kelly = payoff > 0 ? (isFinite(payoff) ? (wKelly - (1 - wKelly) / payoff) : wKelly) : 0; if (kelly < 0) kelly = 0;
     // streaks + drawdown over chronological equity
     var chrono = rows.slice().sort(byDateAsc);
     var maxW = 0, maxL = 0, cw = 0, cl = 0;
@@ -1889,8 +1917,8 @@
         navItem("settings", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', "Ajustes")),
       h("div", { class: "side-foot", style: "margin-top:auto;display:flex;flex-direction:column;gap:12px;" },
         h("div", { style: "border:1px solid #ECE7DD;border-radius:12px;padding:14px;background:#FBFAF7;" },
-          h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, state.accounts.length ? ("Balance total" + (balInfo.currency && balInfo.currency !== "USD" ? " (" + balInfo.currency + ")" : "")) : "P&L acumulado"),
-          h("div", { style: "font-family:'Geist Mono',monospace;font-size:21px;font-weight:600;margin-top:6px;letter-spacing:-0.5px;" }, money(acctBal)),
+          h("div", { style: "font-size:11px;color:#A39E94;letter-spacing:.4px;text-transform:uppercase;" }, balInfo.total != null ? ("Balance total" + (balInfo.currency && balInfo.currency !== "USD" ? " (" + balInfo.currency + ")" : "")) : "P&L acumulado"),
+          h("div", { style: "font-family:'Geist Mono',monospace;font-size:21px;font-weight:600;margin-top:6px;letter-spacing:-0.5px;" + (acctBal < 0 ? "color:#D6483B;" : "") }, (acctBal < 0 ? "−" : "") + money(acctBal)),
           balInfo.excluded ? h("div", { style: "font-size:10.5px;color:#A39E94;margin-top:2px;" }, balInfo.excluded + " cuenta(s) en otra moneda no incluida(s)") : null,
           h("div", { style: "display:flex;align-items:center;gap:6px;margin-top:8px;" },
             h("span", { style: "font-size:11px;color:#807B72;" }, "Hoy"),
@@ -2534,9 +2562,9 @@
     if (!scopedTrades().length) {
       return h("div", { style: "max-width:1180px;margin:0 auto;" }, emptyCard("Sin datos para analizar", "Registra operaciones y aquí verás tu curva de capital y tu rendimiento por día, emoción y símbolo."));
     }
-    var wdNames = ["Lun", "Mar", "Mié", "Jue", "Vie"], wdG = {};
+    var wdNames = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"], wdG = {};
     wdNames.forEach(function (w) { wdG[w] = 0; });
-    scopedTrades().forEach(function (t) { var dow = new Date(t.date + "T12:00:00").getDay(); var idx = dow - 1; if (idx >= 0 && idx < 5) wdG[wdNames[idx]] += t.pnl; });
+    scopedTrades().forEach(function (t) { var dow = new Date(t.date + "T12:00:00").getDay(); var idx = (dow + 6) % 7; wdG[wdNames[idx]] += t.pnl; });
     var weekdayData = wdNames.map(function (w) { return { label: w, value: wdG[w] }; });
     var emoOrder = ["Tranquilo", "Confiado", "Ansioso", "FOMO"], emoG = group(function (t) { return t.emotion; });
     var emotionData = emoOrder.filter(function (k) { return emoG[k]; }).map(function (k) { return { label: k, value: emoG[k].pnl }; });
@@ -3215,13 +3243,15 @@
   function draftPnl() {
     var d = state.draft;
     var valid = d.entry !== "" && d.exit !== "" && commissionValid(d);
-    var t = { symbol: d.symbol, type: d.type, side: d.side, contracts: Number(d.contracts) || 0, entry: Number(d.entry), exit: Number(d.exit) };
+    // Round contracts the same way saveTrade() does, so the live preview
+    // never shows a P&L the app won't actually persist.
+    var t = { symbol: d.symbol, type: d.type, side: d.side, contracts: Math.round(Number(d.contracts)) || 0, entry: Number(d.entry), exit: Number(d.exit) };
     var commission = d.commission === "" || d.commission == null ? 0 : Number(d.commission);
     var gross = valid ? pnlOf(t) : 0;
     var pnl = valid ? netPnlOf(t, commission) : 0;
     return { valid: valid, pnl: pnl, gross: gross, commission: commission };
   }
-  function isSaveValid() { var d = state.draft; return d.symbol && d.entry !== "" && d.exit !== "" && Number(d.entry) > 0 && Number(d.exit) > 0 && Number(d.contracts) > 0 && commissionValid(d) && !!d.date && d.date <= todayISO(); }
+  function isSaveValid() { var d = state.draft; return d.symbol && d.entry !== "" && d.exit !== "" && Number(d.entry) > 0 && Number(d.exit) > 0 && Math.round(Number(d.contracts)) > 0 && commissionValid(d) && !!d.date && d.date <= todayISO(); }
 
   function modalFrame(title, onClose, bodyChildren, footerChildren, width) {
     var modal = h("div", { class: "dc-modal", style: "position:relative;width:" + (width || 540) + "px;max-width:100%;max-height:92vh;overflow-y:auto;background:#fff;border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,.22);" },
@@ -3317,6 +3347,8 @@
         prev.invalid ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.invalid + " fila(s) con error se omitirán") : null,
         prev.dupCount ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.dupCount + " fila(s) parecen duplicadas (misma fecha, símbolo, dirección, contratos, entrada y salida) — se importarán igual; revísalas antes de confirmar.") : null,
         prev.acctAmbiguous ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.acctAmbiguous + " fila(s) con nombre de cuenta que coincide con más de una cuenta tuya — se importarán sin cuenta asignada; asígnalas manualmente después.") : null,
+        prev.acctUnmatched ? h("div", { style: "color:#C77B2A;margin-top:3px;" }, prev.acctUnmatched + " fila(s) con nombre de cuenta que no coincide con ninguna de tus cuentas — se importarán sin cuenta asignada; asígnalas manualmente después.") : null,
+        prev.acctScoped ? h("div", { style: "color:#8A8578;margin-top:3px;" }, prev.acctScoped + " fila(s) sin cuenta identificada se asignarán a \"" + (accountName(state.scopeAccount) || "la cuenta actual") + "\" (la cuenta que tienes seleccionada ahora).") : null,
         prev.errors.length ? h("div", { style: "margin-top:6px;color:#A39E94;font-size:12px;font-family:'Geist Mono',monospace;white-space:pre-line;" }, prev.errors.join("\n")) : null));
     }
     var canImport = !im.busy && prev && prev.valid.length > 0;
