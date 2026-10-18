@@ -98,7 +98,8 @@ body { padding-bottom: env(safe-area-inset-bottom); }
 
   /* The trades table keeps its layout but scrolls horizontally. */
   .trades-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .trades-scroll > * { min-width: 660px; }
+  /* 700px, no 660: el historial ganó la columna de selección múltiple. */
+  .trades-scroll > * { min-width: 700px; }
 
   /* Detail drawer and modals go full-width. */
   .dc-drawer { width: 100% !important; }

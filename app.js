@@ -159,6 +159,9 @@
     fResult: "all", fSymbol: "all", fSetup: "all", fAccount: "all", fTag: "all",
     scopeAccount: "all",
     fDateFrom: "", fDateTo: "", fPnlMin: "", fPnlMax: "", fRating: "all",
+    fSearch: "",
+    // Historial: orden por columna y selección múltiple para acciones en lote.
+    sortKey: "date", sortDir: "desc", selectedIds: [], bulkBusy: false,
     calMonth: thisMonth(),
     showAdd: false, editId: null, draft: blankDraft(),
     showJournalAdd: false, jdraft: blankJournalDraft(), journalEditId: null, jSearch: "", jMood: "all",
@@ -1189,6 +1192,11 @@
   function closeDetail() { state.selectedId = null; render(); }
   async function deleteSelected() {
     var id = state.selectedId;
+    // Borrar una operación es irreversible (no hay papelera ni deshacer), así
+    // que nunca se ejecuta con un solo clic: se nombra la operación concreta
+    // para que el trader vea qué está a punto de perder.
+    var t = state.trades.find(function (x) { return x.id === id; });
+    if (t && !window.confirm("¿Eliminar la operación de " + t.symbol + " del " + fmtDate(t.date) + " (" + signed(t.pnl) + ")?\n\nEsta acción no se puede deshacer.")) return;
     if (String(id).slice(0, 4) === "tmp_") { // not yet synced — drop locally + from outbox
       state.trades = state.trades.filter(function (t) { return t.id !== id; });
       setOutbox(getOutbox().filter(function (it) { return it.tempId !== id; }));
@@ -1202,6 +1210,71 @@
     state.trades = state.trades.filter(function (t) { return t.id !== id; });
     state.selectedId = null;
     saveCache();
+    render();
+  }
+  // ---------- historial: selección múltiple ----------
+  function isSelected(id) { return state.selectedIds.indexOf(id) >= 0; }
+  function toggleSelected(id) {
+    var i = state.selectedIds.indexOf(id);
+    if (i >= 0) state.selectedIds.splice(i, 1); else state.selectedIds.push(id);
+    render();
+  }
+  // Marcar/desmarcar sólo las filas visibles tras los filtros: "seleccionar
+  // todo" nunca debe alcanzar operaciones que el trader no tiene delante.
+  function toggleSelectedAll(ids) {
+    var allOn = ids.length > 0 && ids.every(isSelected);
+    if (allOn) state.selectedIds = state.selectedIds.filter(function (id) { return ids.indexOf(id) < 0; });
+    else ids.forEach(function (id) { if (!isSelected(id)) state.selectedIds.push(id); });
+    render();
+  }
+  function clearSelection() { state.selectedIds = []; render(); }
+  // Mantiene la selección coherente cuando cambian los filtros o se borran
+  // filas: un id que ya no existe en state.trades dejaría el contador mintiendo.
+  function pruneSelection() {
+    state.selectedIds = state.selectedIds.filter(function (id) {
+      return state.trades.some(function (t) { return t.id === id; });
+    });
+  }
+  async function deleteSelectedBulk() {
+    if (state.bulkBusy) return;
+    var ids = state.selectedIds.slice();
+    if (!ids.length) return;
+    var net = state.trades.reduce(function (a, t) { return ids.indexOf(t.id) >= 0 ? a + t.pnl : a; }, 0);
+    if (!window.confirm("¿Eliminar " + ids.length + " operacion" + (ids.length === 1 ? "" : "es") + " (" + signed(net) + " en total)?\n\nEsta acción no se puede deshacer.")) return;
+    // Las no sincronizadas sólo viven en local + outbox; se descartan sin red.
+    var temp = ids.filter(function (id) { return String(id).slice(0, 4) === "tmp_"; });
+    var remote = ids.filter(function (id) { return String(id).slice(0, 4) !== "tmp_"; });
+    if (remote.length && !isOnline()) { window.alert("Necesitas conexión para eliminar operaciones ya guardadas."); return; }
+    state.bulkBusy = true; render();
+    try {
+      if (temp.length) {
+        state.trades = state.trades.filter(function (t) { return temp.indexOf(t.id) < 0; });
+        setOutbox(getOutbox().filter(function (it) { return temp.indexOf(it.tempId) < 0; }));
+      }
+      if (remote.length) {
+        var shots = state.trades.filter(function (t) { return remote.indexOf(t.id) >= 0 && t.screenshot_path; }).map(function (t) { return t.screenshot_path; });
+        var res = await SB.from("trades").delete().in("id", remote);
+        if (res.error) { window.alert("No se pudieron eliminar: " + res.error.message); return; }
+        state.trades = state.trades.filter(function (t) { return remote.indexOf(t.id) < 0; });
+        shots.forEach(removeScreenshot);
+      }
+      if (state.selectedId && ids.indexOf(state.selectedId) >= 0) state.selectedId = null;
+      state.selectedIds = [];
+      saveCache();
+    } finally {
+      state.bulkBusy = false;
+      render();
+    }
+  }
+  // Duplicar: abre el modal precargado con los datos de una operación, pero
+  // sin editId (así se inserta una nueva) y sin la captura del original, que
+  // pertenece a aquel trade concreto. La fecha pasa a hoy porque el caso de
+  // uso es volver a registrar un setup parecido, no reescribir el pasado.
+  function openDuplicate(t) {
+    state.editId = null;
+    state.draft = { symbol: t.symbol, type: t.type, side: t.side, contracts: t.contracts, entry: t.entry, exit: t.exit, date: todayISO(), time: t.time || "", setup: t.setup, emotion: t.emotion, rating: t.rating, note: t.note, account_id: t.account_id || "", tags: (t.tags || []).join(", "), mae: t.mae, mfe: t.mfe, commission: t.commission || "", screenshot_path: "", _imageFile: null };
+    state.selectedId = null;
+    state.showAdd = true;
     render();
   }
   async function saveJournal() {
@@ -1730,6 +1803,20 @@
       pnlStr: signed(t.pnl), pnlColor: pnlColor(t.pnl), stars: stars(t.rating), emotion: t.emotion, emoStyle: emoStyleOf(t.emotion),
     };
   }
+  // Búsqueda del historial: sin acentos y en minúsculas, para que "sesion"
+  // encuentre "sesión" y "nq" encuentre "NQ".
+  function normText(v) {
+    return String(v == null ? "" : v).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  }
+  function tradeMatchesSearch(t, q) {
+    if (!q) return true;
+    var hay = [t.symbol, t.setup, t.emotion, t.note, (t.tags || []).join(" "), accountName(t.account_id) || ""].map(normText).join(" ");
+    // Todos los términos deben aparecer (AND), así "nq perdida" acota de verdad.
+    return q.split(/\s+/).every(function (term) { return hay.indexOf(term) >= 0; });
+  }
+  // Caret pendiente de restaurar en el buscador tras el re-render (render()
+  // reconstruye la columna entera, así que sin esto se pierde el foco al teclear).
+  var _searchCaret = null;
   function exportBtnStyle() { return "display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:#16181C;background:#fff;border:1px solid #E2DDD3;border-radius:9px;padding:8px 12px;"; }
   function emptyCard(title, sub) {
     return h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:48px 24px;text-align:center;" },
@@ -2278,10 +2365,32 @@
     if (state.fRating !== "all") ft = ft.filter(function (t) { return String(t.rating) === state.fRating; });
     if (state.fPnlMin !== "") ft = ft.filter(function (t) { return t.pnl >= Number(state.fPnlMin); });
     if (state.fPnlMax !== "") ft = ft.filter(function (t) { return t.pnl <= Number(state.fPnlMax); });
-    ft.sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
+    var q = normText(state.fSearch).trim();
+    if (q) ft = ft.filter(function (t) { return tradeMatchesSearch(t, q); });
+    // Orden por la columna elegida. La fecha siempre desempata (y el id tras
+    // ella) para que el orden sea estable entre renders con valores repetidos.
+    var sortVal = {
+      date: function (t) { return t.date + " " + (t.time || ""); },
+      symbol: function (t) { return normText(t.symbol); },
+      pnl: function (t) { return t.pnl; },
+      contracts: function (t) { return Number(t.contracts) || 0; },
+      rating: function (t) { return Number(t.rating) || 0; }
+    };
+    var getVal = sortVal[state.sortKey] || sortVal.date;
+    var dir = state.sortDir === "asc" ? 1 : -1;
+    ft.sort(function (a, b) {
+      var va = getVal(a), vb = getVal(b);
+      if (va < vb) return -dir;
+      if (va > vb) return dir;
+      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+      return String(a.id) < String(b.id) ? 1 : -1;
+    });
     // Render windowing: only build the first N rows to keep large lists smooth.
     var shown = Math.min(ft.length, state.tradesShown);
     var tradeRows = ft.slice(0, shown).map(buildRow);
+    // La selección sólo puede referirse a operaciones que siguen existiendo.
+    pruneSelection();
+    var visibleIds = ft.slice(0, shown).map(function (t) { return t.id; });
     var symbolOpts = Object.keys(state.trades.reduce(function (acc, t) { acc[t.symbol] = 1; return acc; }, {})).sort();
 
     var fSeg = function (v, label) {
@@ -2316,8 +2425,36 @@
     var ratingSelect = h("select", { style: advInput + "cursor:pointer;font-weight:500;", onChange: function (ev) { state.fRating = ev.target.value; state.tradesShown = 150; render(); } },
       [h("option", { value: "all" }, "Toda valoración")].concat([5, 4, 3, 2, 1].map(function (r) { return h("option", { value: String(r) }, "★".repeat(r)); })));
     ratingSelect.value = state.fRating;
-    var activeCount = [state.fResult !== "all", state.fSymbol !== "all", state.fSetup !== "all", state.fAccount !== "all", state.fTag !== "all", !!state.fDateFrom, !!state.fDateTo, state.fRating !== "all", state.fPnlMin !== "", state.fPnlMax !== ""].filter(Boolean).length;
-    function clearFilters() { state.fResult = "all"; state.fSymbol = "all"; state.fSetup = "all"; state.fAccount = "all"; state.fTag = "all"; state.fDateFrom = ""; state.fDateTo = ""; state.fRating = "all"; state.fPnlMin = ""; state.fPnlMax = ""; state.tradesShown = 150; render(); }
+    var activeCount = [state.fResult !== "all", state.fSymbol !== "all", state.fSetup !== "all", state.fAccount !== "all", state.fTag !== "all", !!state.fDateFrom, !!state.fDateTo, state.fRating !== "all", state.fPnlMin !== "", state.fPnlMax !== "", !!state.fSearch].filter(Boolean).length;
+    function clearFilters() { state.fResult = "all"; state.fSymbol = "all"; state.fSetup = "all"; state.fAccount = "all"; state.fTag = "all"; state.fDateFrom = ""; state.fDateTo = ""; state.fRating = "all"; state.fPnlMin = ""; state.fPnlMax = ""; state.fSearch = ""; state.tradesShown = 150; render(); }
+    var searchInput = h("input", {
+      type: "search", placeholder: "Buscar símbolo, nota, etiqueta…", "aria-label": "Buscar en el historial",
+      style: advInput + "flex:1;min-width:190px;",
+      onInput: function (ev) { state.fSearch = ev.target.value; _searchCaret = ev.target.selectionStart; state.tradesShown = 150; render(); }
+    });
+    searchInput.value = state.fSearch;
+    // render() reconstruye el input, así que devolvemos el foco y el caret donde estaban.
+    if (_searchCaret != null) {
+      (function (caret) {
+        setTimeout(function () {
+          try { searchInput.focus(); searchInput.setSelectionRange(caret, caret); } catch (e) { }
+        }, 0);
+      })(_searchCaret);
+      _searchCaret = null;
+    }
+    var searchBar = h("div", { style: "display:flex;gap:9px;align-items:center;margin-bottom:10px;" }, searchInput,
+      state.fSearch ? h("button", { title: "Borrar la búsqueda", style: "font-size:12.5px;font-weight:600;color:#807B72;background:#fff;border:1px solid #E2DDD3;border-radius:9px;padding:7px 12px;cursor:pointer;", hoverBg: "#FAF8F4", onClick: function () { state.fSearch = ""; state.tradesShown = 150; render(); } }, "Limpiar") : null);
+
+    // Barra de acciones en lote: sólo aparece cuando hay algo seleccionado.
+    var selCount = state.selectedIds.length;
+    var selTrades = state.trades.filter(function (t) { return isSelected(t.id); });
+    var bulkBar = selCount ? h("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;background:#F4F7FB;border:1px solid #D9E3F0;border-radius:12px;padding:10px 14px;" },
+      h("span", { style: "font-size:12.5px;font-weight:600;color:#2F5F8A;" }, selCount + (selCount === 1 ? " operación seleccionada" : " operaciones seleccionadas")),
+      h("span", { style: "font-size:12.5px;color:#54514A;font-family:'Geist Mono',monospace;" }, signed(selTrades.reduce(function (a, t) { return a + t.pnl; }, 0))),
+      h("button", { title: "Exportar a CSV sólo las seleccionadas", style: exportBtnStyle() + "margin-left:auto;", hoverBg: "#FAF8F4", onClick: function () { exportCSV(selTrades); } }, "Exportar selección"),
+      h("button", { title: "Quitar la selección", style: "font-size:12.5px;font-weight:600;color:#54514A;background:#fff;border:1px solid #E2DDD3;border-radius:9px;padding:8px 12px;cursor:pointer;", hoverBg: "#FAF8F4", onClick: clearSelection }, "Deseleccionar"),
+      h("button", { title: "Eliminar las operaciones seleccionadas", style: "font-size:12.5px;font-weight:600;border-radius:9px;padding:8px 12px;cursor:pointer;" + (state.bulkBusy ? "background:#CFC9BD;color:#fff;border:1px solid #CFC9BD;cursor:wait;" : "background:#FCF1EF;color:#D6483B;border:1px solid #F2D9D5;"), onClick: deleteSelectedBulk }, state.bulkBusy ? "Eliminando…" : "Eliminar") ) : null;
+
     var advBar = h("div", { style: "display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:14px;background:#fff;border:1px solid #ECE7DD;border-radius:12px;padding:10px 12px;" },
       h("span", { style: "font-size:12px;color:#807B72;font-weight:600;" }, "Filtros"),
       h("span", { style: "font-size:12px;color:#A39E94;" }, "Desde"), dateFrom,
@@ -2327,11 +2464,48 @@
       activeCount ? h("span", { style: "font-size:11.5px;font-weight:600;color:#3D6FB0;background:#EAF0F7;border-radius:20px;padding:3px 10px;" }, activeCount + (activeCount > 1 ? " filtros activos" : " filtro activo")) : null,
       activeCount ? h("button", { style: "font-size:12.5px;font-weight:600;color:#D6483B;background:none;border:none;cursor:pointer;margin-left:auto;", onClick: clearFilters }, "Limpiar filtros") : null);
     var gridCols = "84px 60px 1fr 64px 92px 92px 110px 120px 96px";
-    var headerCols = ["Fecha", "Lado", "Símbolo", "Cont.", "Entrada", "Salida", "Setup", "P&L", "Valor."];
-    var headerRow = h("div", { style: "display:grid;grid-template-columns:" + gridCols + ";gap:8px;padding:11px 18px;border-bottom:1px solid #ECE7DD;font-size:11px;color:#A39E94;font-weight:600;letter-spacing:.3px;text-transform:uppercase;background:#FBFAF7;" },
-      headerCols.map(function (c, i) { return h("span", { style: (i === 3 || i === 4 || i === 5 || i === 7 || i === 8) ? "text-align:right;" : "" }, c); }));
+    // La fila sigue siendo un <button> (abre el detalle); la casilla de selección
+    // va en un envoltorio exterior porque un checkbox no puede anidarse dentro
+    // de un botón sin romper el marcado ni robarle el clic.
+    var rowWrap = "display:grid;grid-template-columns:34px 1fr;gap:8px;align-items:center;width:100%;padding:13px 18px;border-bottom:1px solid #F3EFE7;";
+    // [label, clave de orden o null si la columna no es ordenable, alineada a la derecha]
+    var headerCols = [["Fecha", "date", false], ["Lado", null, false], ["Símbolo", "symbol", false], ["Cont.", "contracts", true],
+      ["Entrada", null, true], ["Salida", null, true], ["Setup", null, false], ["P&L", "pnl", true], ["Valor.", "rating", true]];
+    function setSort(key) {
+      // Mismo encabezado → invierte; nuevo → empieza descendente, que es lo
+      // útil de entrada (fecha más reciente, mayor pérdida, mejor valoración).
+      if (state.sortKey === key) state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+      else { state.sortKey = key; state.sortDir = "desc"; }
+      state.tradesShown = 150;
+      render();
+    }
+    var allVisibleOn = visibleIds.length > 0 && visibleIds.every(isSelected);
+    var selectAllBox = h("input", { type: "checkbox", title: allVisibleOn ? "Desmarcar las visibles" : "Seleccionar las visibles", style: "width:15px;height:15px;cursor:pointer;accent-color:#16181C;margin:0;", onChange: function () { toggleSelectedAll(visibleIds); } });
+    selectAllBox.checked = allVisibleOn;
+    selectAllBox.disabled = visibleIds.length === 0;
+    var headerRow = h("div", { style: "display:grid;grid-template-columns:34px 1fr;gap:8px;padding:11px 18px;border-bottom:1px solid #ECE7DD;font-size:11px;color:#A39E94;font-weight:600;letter-spacing:.3px;text-transform:uppercase;background:#FBFAF7;align-items:center;" },
+      h("span", { style: "display:flex;align-items:center;" }, selectAllBox),
+      h("div", { style: "display:grid;grid-template-columns:" + gridCols + ";gap:8px;align-items:center;" },
+      headerCols.map(function (c) {
+        var label = c[0], key = c[1], right = c[2];
+        var align = right ? "text-align:right;justify-content:flex-end;" : "";
+        if (!key) return h("span", { style: align }, label);
+        var active = state.sortKey === key;
+        var caret = active ? (state.sortDir === "asc" ? " ▲" : " ▼") : "";
+        return h("button", {
+          title: "Ordenar por " + label,
+          "aria-label": "Ordenar por " + label,
+          style: "display:flex;align-items:center;gap:2px;background:none;border:none;padding:0;cursor:pointer;font:inherit;letter-spacing:inherit;text-transform:inherit;" + align + (active ? "color:#16181C;" : "color:#A39E94;"),
+          onClick: function () { setSort(key); }
+        }, label + caret);
+      })));
     var bodyRows = tradeRows.map(function (row) {
-      return h("button", { style: "display:grid;grid-template-columns:" + gridCols + ";gap:8px;align-items:center;width:100%;text-align:left;padding:13px 18px;border:none;border-bottom:1px solid #F3EFE7;background:none;font-size:13px;", hoverBg: "#FAF8F4", onClick: row.onClick },
+      var box = h("input", { type: "checkbox", title: "Seleccionar esta operación", style: "width:15px;height:15px;cursor:pointer;accent-color:#16181C;margin:0;", onClick: function (ev) { ev.stopPropagation(); }, onChange: function () { toggleSelected(row.id); } });
+      box.checked = isSelected(row.id);
+      var picked = isSelected(row.id);
+      return h("div", { style: rowWrap + (picked ? "background:#F4F7FB;" : ""), hoverBg: picked ? "#EDF2F9" : "#FAF8F4" },
+        h("span", { style: "display:flex;align-items:center;" }, box),
+        h("button", { style: "display:grid;grid-template-columns:" + gridCols + ";gap:8px;align-items:center;width:100%;text-align:left;padding:0;border:none;background:none;font-size:13px;", onClick: row.onClick },
         h("span", { style: "color:#807B72;font-family:'Geist Mono',monospace;font-size:12.5px;" }, row.dateStr),
         h("span", { style: row.sideStyle }, row.sideShort),
         h("span", null, h("span", { style: "font-weight:600;" }, row.symbol), h("span", { style: "font-size:11px;color:#A39E94;margin-left:6px;" }, row.instr)),
@@ -2340,7 +2514,7 @@
         h("span", { style: "text-align:right;font-family:'Geist Mono',monospace;color:#54514A;" }, row.exitStr),
         h("span", null, h("span", { style: row.setupStyle }, row.setup)),
         h("span", { style: "text-align:right;font-family:'Geist Mono',monospace;font-weight:600;" + row.pnlColor }, row.pnlStr),
-        h("span", { style: "text-align:right;color:#D8B23E;letter-spacing:1px;font-size:12px;" }, row.stars));
+        h("span", { style: "text-align:right;color:#D8B23E;letter-spacing:1px;font-size:12px;" }, row.stars)));
     });
     if (ft.length === 0) bodyRows.push(h("div", { style: "padding:48px;text-align:center;color:#A39E94;font-size:13px;" }, state.trades.length === 0 ? "Aún no tienes operaciones. Pulsa “Nueva operación”." : "Sin operaciones para este filtro."));
     if (ft.length > shown) bodyRows.push(h("button", { style: "display:block;width:100%;text-align:center;padding:14px;border:none;background:#FBFAF7;color:#3D6FB0;font-weight:600;font-size:13px;border-top:1px solid #F3EFE7;", hoverBg: "#F1EDE5", onClick: function () { state.tradesShown += 150; render(); } }, "Ver más (" + (ft.length - shown) + " restantes)"));
@@ -2358,7 +2532,9 @@
             icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 12a9 9 0 1 0 2.6-6.3"/><polyline points="3 4 3 9 8 9"/></svg>'), "Restaurar"),
           h("button", { title: "Importar operaciones desde un CSV", onClick: openImport, style: exportBtnStyle(), hoverBg: "#FAF8F4" },
             icon('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>'), "Importar"))),
+      searchBar,
       advBar,
+      bulkBar,
       h("div", { class: "trades-card", style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;overflow:hidden;" },
         h("div", { class: "trades-scroll" }, headerRow, bodyRows)));
   }
@@ -3116,6 +3292,8 @@
             h("div", { style: "margin-bottom:8px;font-size:11px;color:#807B72;" }, "Captura"),
             screenshotEl(st.screenshot_path)) : null),
         h("div", { style: "padding:16px 22px;border-top:1px solid #ECE7DD;display:flex;gap:10px;" },
+          h("button", { title: "Crear una operación nueva con estos datos", style: "flex:none;padding:11px 13px;border-radius:10px;border:1px solid #E2DDD3;background:#fff;color:#16181C;font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:center;gap:7px;", hoverBg: "#FAF8F4", onClick: function () { openDuplicate(st); } },
+            icon('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'), "Duplicar"),
           h("button", { style: "flex:1;padding:11px;border-radius:10px;border:none;background:#16181C;color:#fff;font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:center;gap:7px;", onClick: function () { openEdit(st); } },
             icon('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>'), "Editar"),
           h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #F2D9D5;background:#FCF1EF;color:#D6483B;font-weight:600;font-size:13px;", hoverBg: "#FBEAE7", onClick: deleteSelected }, "Eliminar"))));
@@ -3497,7 +3675,7 @@
       // Wipe the cached financial snapshot + outbox so it can't be read on a
       // shared device after logout (security hardening F-05).
       if (prevUser) { try { localStorage.removeItem("bitacora_cache_" + prevUser.id); localStorage.removeItem("bitacora_outbox_" + prevUser.id); } catch (e) { } }
-      state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.scopeAccount = "all"; state.fTag = "all"; state.fResult = "all"; state.fSymbol = "all"; state.fSetup = "all"; state.fDateFrom = ""; state.fDateTo = ""; state.fRating = "all"; state.fPnlMin = ""; state.fPnlMax = ""; state.quickNote = ""; state.jSearch = ""; state.jMood = "all"; state.pending = 0;
+      state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.scopeAccount = "all"; state.fTag = "all"; state.fResult = "all"; state.fSymbol = "all"; state.fSetup = "all"; state.fDateFrom = ""; state.fDateTo = ""; state.fRating = "all"; state.fPnlMin = ""; state.fPnlMax = ""; state.fSearch = ""; state.sortKey = "date"; state.sortDir = "desc"; state.selectedIds = []; state.quickNote = ""; state.jSearch = ""; state.jMood = "all"; state.pending = 0;
       try { localStorage.removeItem("bitacora_scope_account"); window.__bitacoraScopeAccount = "all"; } catch (e) { }
       state.mfaGate = false; state.mfaChecked = false; state.mfaFactors = []; state.mfaFactorsLoaded = false; render();
     }
