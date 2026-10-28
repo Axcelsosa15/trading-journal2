@@ -27,7 +27,8 @@ check("UI exposes every lifecycle state", states.every(s => uiStates.includes(s)
 check("Account save validates non-negative target and drawdown", /optionalNonNegative\(d\.profit_target/.test(app) && /optionalNonNegative\(d\.max_drawdown/.test(app));
 check("Account save catches unexpected async failures", /No se pudo guardar la cuenta por un error de conexión o del servidor/.test(app));
 check("Account archive catches unexpected async failures", /No se pudo archivar la cuenta por un error de conexión o del servidor/.test(app));
-check("Archiving updates status/history rather than deleting the account", /update\(\{ status: "archivada", account_history: history \}\)/.test(app) && !/from\("accounts"\)\.delete\(\)/.test(app));
+const archiveFn = app.match(/async function deleteAccount\(\)([\s\S]*?)function openAccountAdd\(/);
+check("Archiving updates status/history rather than deleting the account", !!archiveFn && /update\(\{ status: "archivada", account_history: history \}\)/.test(archiveFn[1]) && !/\.delete\(\)/.test(archiveFn[1]));
 check("Archived account cannot be archived again", /account\.status === "archivada"/.test(app) && /editing && d\.status !== "archivada"/.test(app));
 
 if (!process.exitCode) console.log("ACCOUNT LIFECYCLE SMOKE OK");
