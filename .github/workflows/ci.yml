@@ -18,7 +18,7 @@ jobs:
           node-version: '22'
       - name: Install dev dependencies (jsdom for the test harness)
         run: npm install --no-audit --no-fund
-      - name: Syntax check (app.js, sw.js)
+      - name: Syntax check (app.js, sw.js, strategy-stability.js)
         run: npm run check
       - name: Guard against app.js being gutted
         run: |
