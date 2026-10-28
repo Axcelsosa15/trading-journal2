@@ -26,8 +26,8 @@
     try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(!/^bitacora_cache_/.test(k||""))continue;var x=JSON.parse(localStorage.getItem(k));if(x&&Array.isArray(x.trades)&&(!best||(x.ts||0)>(best.ts||0)))best=x;}}catch(e){}
     return best||{trades:[],accounts:[]};
   }
-  function readLab(){try{var x=JSON.parse(localStorage.getItem(KEY)||"{}");return x&&Array.isArray(x.strategies)?x:{strategies:[]};}catch(e){return {strategies:[]};}}
-  function saveLab(x){try{localStorage.setItem(KEY,JSON.stringify(x));}catch(e){}}
+  function readLab(){try{if(window.BitacoraStrategyLab&&typeof window.BitacoraStrategyLab.getStrategies==="function")return {strategies:window.BitacoraStrategyLab.getStrategies()};var x=JSON.parse(localStorage.getItem(KEY)||"{}");return x&&Array.isArray(x.strategies)?x:{strategies:[]};}catch(e){return {strategies:[]};}}
+  function saveLab(x){try{localStorage.setItem(KEY,JSON.stringify(x));}catch(e){}if(window.BitacoraStrategyLab&&typeof window.BitacoraStrategyLab.saveStrategies==="function")return window.BitacoraStrategyLab.saveStrategies(x.strategies);return Promise.resolve({ok:true});}
   function tagsOf(t){var a=t.tags;if(Array.isArray(a))return a.map(String);if(typeof a==="string"){try{var p=JSON.parse(a);if(Array.isArray(p))return p.map(String);}catch(e){}return a.split(",").map(function(v){return v.trim();}).filter(Boolean);}return [];}
   function n(v){var x=Number(v);return v!==""&&v!=null&&isFinite(x)?x:null;}
   function money(v){return v==null||!isFinite(v)?"—":(v<0?"−":"+")+"$"+Math.abs(v).toLocaleString("en-US",{maximumFractionDigits:2});}
@@ -60,10 +60,25 @@
       '<form class="sl-form" data-sl-form><input name="name" required maxlength="80" placeholder="Nombre de estrategia"><input name="version" required maxlength="30" placeholder="Versión (ej. 1.0)"><select name="status"><option>En desarrollo</option><option>Recopilando datos</option><option>En validación</option><option>En observación</option><option>Estable según criterios</option><option>En deterioro</option></select><input name="rules" maxlength="160" placeholder="Reglas / cambio de versión"><button class="sl-btn" type="submit">Guardar versión</button></form>'+
       '<div class="sl-list">'+(list||'<div class="sl-status">Todavía no hay versiones registradas. Crea una versión arriba y etiqueta las operaciones correspondientes.</div>')+'</div>';
     if(panel.__slHtml===markup)return; panel.innerHTML=markup; panel.__slHtml=markup;
-    var form=panel.querySelector("[data-sl-form]");if(form&&!form.__slBound){form.__slBound=true;form.addEventListener("submit",function(e){e.preventDefault();var fd=new FormData(form),name=String(fd.get("name")||"").trim(),version=String(fd.get("version")||"").trim();if(!name||!version)return;var x=readLab(),i=x.strategies.findIndex(function(s){return s.name===name&&s.version===version;});var item={name:name,version:version,status:String(fd.get("status")||"En desarrollo"),rules:String(fd.get("rules")||"").trim(),created:new Date().toISOString()};if(i>=0)x.strategies[i]=item;else x.strategies.push(item);saveLab(x);mount();});}
+    var form=panel.querySelector("[data-sl-form]");if(form&&!form.__slBound){form.__slBound=true;form.addEventListener("submit",function(e){e.preventDefault();var fd=new FormData(form),name=String(fd.get("name")||"").trim(),version=String(fd.get("version")||"").trim();if(!name||!version)return;var x=readLab(),i=x.strategies.findIndex(function(s){return s.name===name&&s.version===version;});var item={name:name,version:version,status:String(fd.get("status")||"En desarrollo"),rules:String(fd.get("rules")||"").trim(),created:new Date().toISOString()};if(i>=0)x.strategies[i]=item;else x.strategies.push(item);Promise.resolve(saveLab(x)).then(function(result){if(result&&result.ok===false)toast("Versión guardada localmente; sincronización pendiente.");mount();});});}
+  }
+  function strategyPicker(){
+    var root=document.getElementById("modal-root");if(!root||!/Nueva operaci|Editar operaci/.test(textOf(root))||root.querySelector("[data-sl-picker]"))return;
+    var list=readLab().strategies||[];if(!list.length)return;
+    var tags=root.querySelector('input[placeholder*="NY open"]');if(!tags)return;
+    var wrap=document.createElement("div");wrap.setAttribute("data-sl-picker","1");wrap.style.cssText="margin:10px 0;padding:10px;border:1px solid #d8d2c7;border-radius:9px;";
+    var label=document.createElement("label");label.textContent="Estrategia / versión";label.style.cssText="display:block;font-size:12px;font-weight:700;margin-bottom:6px;";
+    var select=document.createElement("select");select.setAttribute("data-sl-selected","1");select.style.cssText="width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;background:#fff;color:#222;";
+    var blank=document.createElement("option");blank.value="";blank.textContent="Sin asignar";select.appendChild(blank);
+    list.forEach(function(s){var o=document.createElement("option");o.value="strategy:"+s.name+"|version:"+s.version;o.textContent=s.name+" · "+s.version;select.appendChild(o);});
+    wrap.appendChild(label);wrap.appendChild(select);tags.parentElement.insertAdjacentElement("beforebegin",wrap);
+  }
+  function bindStrategyTradeSave(){
+    var root=document.getElementById("modal-root");if(!root||root.__slTradeBound)return;root.__slTradeBound=true;
+    root.addEventListener("click",function(ev){var b=ev.target&&ev.target.closest?ev.target.closest("button"):null;if(!b||!/Guardar operaci|Guardar cambios/.test(textOf(b)))return;var pick=root.querySelector("[data-sl-selected]");if(!pick||!pick.value)return;var input=root.querySelector('input[placeholder*="NY open"]');if(!input)return;var vals=input.value.split(",").map(function(v){return v.trim();}).filter(Boolean);if(vals.indexOf(pick.value)<0)vals.push(pick.value);input.value=vals.join(", ");input.dispatchEvent(new Event("input",{bubbles:true}));},true);
   }
   var observer=new MutationObserver(function(){if(!window.__slQueued){window.__slQueued=true;requestAnimationFrame(function(){window.__slQueued=false;mount();});}});
-  observer.observe(document.documentElement,{childList:true,subtree:true});
+  observer.observe(document.documentElement,{childList:true,subtree:true});\n  var modalObserver=new MutationObserver(function(){strategyPicker();bindStrategyTradeSave();});modalObserver.observe(document.documentElement,{childList:true,subtree:true});
   window.addEventListener("focus",mount);window.addEventListener("storage",mount);
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",mount);else mount();
 })();
