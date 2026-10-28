@@ -21,6 +21,7 @@ create table if not exists public.accounts (
   profit_target numeric,
   max_drawdown numeric,
   notes text not null default '',
+  account_history jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now()
 );
 
@@ -77,6 +78,7 @@ alter table public.accounts add column if not exists status text default 'activa
 alter table public.accounts add column if not exists profit_target numeric;
 alter table public.accounts add column if not exists max_drawdown numeric;
 alter table public.accounts add column if not exists notes text default '';
+alter table public.accounts add column if not exists account_history jsonb not null default '[]'::jsonb;
 alter table public.accounts add column if not exists created_at timestamptz default now();
 
 alter table public.trades add column if not exists user_id uuid default auth.uid();
@@ -175,15 +177,16 @@ begin
     alter table public.accounts
       add constraint accounts_kind_valid check (kind in ('fondeo', 'live', 'demo')) not valid;
   end if;
-  if not exists (select 1 from pg_constraint where conname = 'accounts_status_valid') then
-    alter table public.accounts
-      add constraint accounts_status_valid check (status in ('activa', 'pausada', 'cerrada')) not valid;
-  end if;
   if not exists (select 1 from pg_constraint where conname = 'trades_account_id_fkey') then
     alter table public.trades
       add constraint trades_account_id_fkey
       foreign key (account_id) references public.accounts(id) on delete set null not valid;
   end if;
 end $$;
+
+alter table public.accounts drop constraint if exists accounts_status_valid;
+alter table public.accounts
+  add constraint accounts_status_valid
+  check (status in ('activa', 'evaluacion', 'fondeada', 'payout_pedido', 'payout_aprobado', 'aprobada', 'quemada', 'pausada', 'cerrada', 'archivada')) not valid;
 
 commit;
