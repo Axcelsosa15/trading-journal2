@@ -1,7 +1,6 @@
 (function () {
   "use strict";
   var KEY = "bitacora_strategy_lab_v1";
-  var STYLE = "sl-panel{display:block}";
   var css = `
     .sl-panel{margin:16px 0;padding:18px;border:1px solid var(--rp-line,#2d3540);border-radius:14px;background:linear-gradient(180deg,var(--rp-panel-1,#20242b),var(--rp-panel-2,#171a20));color:var(--rp-ink,#eef0f3)}
     .sl-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
@@ -20,6 +19,7 @@
     .sl-positive{color:var(--rp-green,#15905b)}.sl-negative{color:var(--rp-red,#d6483b)}
     @media(max-width:820px){.sl-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.sl-form{grid-template-columns:1fr 1fr}.sl-form button{grid-column:1/-1}.sl-row{grid-template-columns:1fr auto}.sl-row .sl-chip{grid-column:1/-1;justify-self:start}}
   `;
+  if (!document.getElementById("strategy-stability-style")) { var style=document.createElement("style"); style.id="strategy-stability-style"; style.textContent=css; document.head.appendChild(style); }
   function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
   function readCache(){
     var best=null;
