@@ -1408,13 +1408,36 @@
         max_drawdown: d.max_drawdown === "" ? null : Number(d.max_drawdown), notes: d.notes,
         account_history: history
       };
+      function missingAccountHistoryColumn(error) {
+        var message = String(error && error.message || "");
+        return /account_history/i.test(message) && /column|schema cache|does not exist|could not find/i.test(message);
+      }
+      async function persistAccount(payload) {
+        var result = state.accountEditId
+          ? await SB.from("accounts").update(payload).eq("id", state.accountEditId).select().single()
+          : await SB.from("accounts").insert(payload).select().single();
+        if (result.error && missingAccountHistoryColumn(result.error) && Object.prototype.hasOwnProperty.call(payload, "account_history")) {
+          // Keep account creation/editing usable against older Supabase schemas.
+          // The SQL migration adds history support; do not silently claim it was saved.
+          var legacyPayload = Object.assign({}, payload);
+          delete legacyPayload.account_history;
+          result = state.accountEditId
+            ? await SB.from("accounts").update(legacyPayload).eq("id", state.accountEditId).select().single()
+            : await SB.from("accounts").insert(legacyPayload).select().single();
+          if (!result.error) {
+            var migrationNotice = "La cuenta se guardó, pero tu base de datos aún no tiene la columna account_history. El historial y los movimientos no se guardarán hasta aplicar supabase/migrations/20261028070000_add_accounts_account_history.sql en Supabase.";
+            window.alert(migrationNotice);
+          }
+        }
+        return result;
+      }
       if (state.accountEditId) {
-        var up = await SB.from("accounts").update(row).eq("id", state.accountEditId).select().single();
+        var up = await persistAccount(row);
         if (up.error) { window.alert("No se pudo actualizar la cuenta: " + up.error.message); return; }
         var u = coerceAccount(up.data);
         state.accounts = state.accounts.map(function (a) { return a.id === u.id ? u : a; });
       } else {
-        var res = await SB.from("accounts").insert(row).select().single();
+        var res = await persistAccount(row);
         if (res.error) { window.alert("No se pudo crear la cuenta: " + res.error.message); return; }
         state.accounts = [coerceAccount(res.data)].concat(state.accounts);
       }
