@@ -166,7 +166,7 @@
     calMonth: thisMonth(),
     showAdd: false, editId: null, draft: blankDraft(),
     showJournalAdd: false, jdraft: blankJournalDraft(), journalEditId: null, jSearch: "", jMood: "all",
-    showAccountAdd: false, accountEditId: null, accountDraft: blankAccountDraft(),
+    showAccountAdd: false, accountEditId: null, accountDraft: blankAccountDraft(), accountFilter: "all",
     settings: defaultSettings(), settingsSaved: false,
     showChecklist: false, checkState: [],
     quickNote: "", quickMood: "Enfocado",
@@ -2149,64 +2149,242 @@
     var labels = { activa: "Activa", evaluacion: "Evaluación", fondeada: "Fondeada", payout_pedido: "Payout pedido", payout_aprobado: "Payout aprobado", aprobada: "Aprobada", quemada: "Quemada", pausada: "En pausa", cerrada: "Cerrada", archivada: "Archivada" };
     return labels[status] || String(status || "Sin estado");
   }
-  function accountsView() {
-    var burnedCount = state.accounts.filter(function (a) { return a.status === "quemada"; }).length;
-    var activeCount = state.accounts.filter(function (a) { return ["activa", "evaluacion", "fondeada", "payout_pedido"].indexOf(a.status) >= 0; }).length;
-    var totalNet = state.accounts.reduce(function (sum, a) { return sum + accountStats(a.id).net; }, 0);
-    var topBar = h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap;" },
-      h("div", { style: "font-size:13px;color:#A39E94;" }, state.accounts.length + (state.accounts.length === 1 ? " cuenta" : " cuentas") + " · " + activeCount + " activas · " + burnedCount + " quemadas · P&L " + signed(totalNet)),
-      h("button", { style: "display:flex;align-items:center;gap:7px;background:#16181C;color:#fff;font-weight:600;font-size:13px;padding:9px 15px;border-radius:9px;", onClick: openAccountAdd },
-        icon('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'), "Nueva cuenta"));
-    if (!state.accounts.length) {
-      return h("div", { style: "max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:16px;" }, topBar,
-        emptyCard("Sin cuentas todavía", "Crea tus cuentas de fondeo (prop firms) y lives para llevar el control de cada una por separado."));
-    }
-    var cards = state.accounts.map(function (a) {
-      var st = accountStats(a.id);
-      var rows = [];
-      function row(label, value, valStyle) {
-        return h("div", { style: "display:flex;align-items:center;justify-content:space-between;font-size:12.5px;padding:3px 0;" },
-          h("span", { style: "color:#807B72;" }, label),
-          h("span", { style: "font-family:'Geist Mono',monospace;font-weight:600;" + (valStyle || "") }, value));
-      }
-      rows.push(row("Balance", "$" + Number(a.balance).toLocaleString("en-US") + " " + a.currency));
-      if (a.phase) rows.push(row("Fase", a.phase, "font-family:inherit;"));
-      if (a.profit_target !== "") rows.push(row("Objetivo", "$" + Number(a.profit_target).toLocaleString("en-US")));
-      if (a.max_drawdown !== "") rows.push(row("Drawdown máx.", "$" + Number(a.max_drawdown).toLocaleString("en-US")));
-      rows.push(row("P&L registrado", signed(st.net), pnlColor(st.net)));
-      rows.push(row("Operaciones", st.count + " · " + st.winRate + "% WR", "font-family:'Geist Mono',monospace;"));
-      if (st.count) {
-        rows.push(row("Profit factor", ratioStr(st.pf), st.pf >= 1 ? "color:#16915B;" : "color:#D6483B;"));
-        rows.push(row("Expectativa/op.", signed(st.expectancy), pnlColor(st.expectancy)));
-        rows.push(row("DD realizado", "−" + money(st.maxDD), "color:#D6483B;"));
-      }
-      var viewBtn = h("button", { style: "flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#16181C;color:#fff;font-weight:600;font-size:12.5px;padding:9px;border-radius:9px;border:none;cursor:pointer;", onClick: function () { setScopeAccount(a.id); setView("trades"); } },
-        icon('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="18" r="1.3" fill="currentColor" stroke="none"/></svg>'), "Ver operaciones");
-      var editBtn = h("button", { style: "flex:none;background:#fff;border:1px solid #E2DDD3;color:#54514A;font-weight:600;font-size:12.5px;padding:9px 14px;border-radius:9px;cursor:pointer;", hoverBg: "#FAF8F4", onClick: function () { openAccountEdit(a); } }, "Editar");
-      var recentEvents = (Array.isArray(a.account_history) ? a.account_history : []).slice(-3).reverse();
-      var historyPanel = recentEvents.length ? h("div", { style: "border-top:1px solid #F3EFE7;margin-top:8px;padding-top:8px;display:flex;flex-direction:column;gap:6px;" },
-        h("div", { style: "font-size:10.5px;font-weight:700;color:#807B72;text-transform:uppercase;letter-spacing:.4px;" }, "Historial de cuenta"),
-        recentEvents.map(function (ev) {
-          var label = ev.date || "";
-          var transition = ev.from && ev.to && ev.from !== ev.to ? " · " + ev.from + " → " + ev.to : "";
-          return h("div", { style: "font-size:11.5px;color:#807B72;line-height:1.45;" },
-            h("span", { style: "font-family:'Geist Mono',monospace;color:#A39E94;" }, label),
-            " · ", String(ev.note || "Evento registrado"), transition);
-        })) : null;
-      return h("div", { style: "text-align:left;background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:4px;" },
-        h("div", { style: "display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px;gap:8px;" },
-          h("div", { style: "min-width:0;" },
-            h("div", { style: "font-size:15.5px;font-weight:700;letter-spacing:-0.2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" }, a.name),
-            a.firm ? h("div", { style: "font-size:12px;color:#A39E94;margin-top:2px;" }, a.firm) : null),
-          h("div", { style: "display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex:none;" },
-            h("span", { style: kindStyle(a.kind) }, KIND_LABEL[a.kind] || a.kind),
-            h("span", { style: statusStyle(a.status) }, statusLabel(a.status)))),
-        h("div", { style: "border-top:1px solid #F3EFE7;margin-top:4px;padding-top:8px;" }, rows),
-        historyPanel,
-        h("div", { style: "display:flex;gap:8px;margin-top:14px;" }, viewBtn, editBtn));
+  function accountMovementList(account) {
+    return (Array.isArray(account.account_history) ? account.account_history : []).filter(function (event) {
+      return event && (event.type === "cost" || event.type === "payout");
     });
-    return h("div", { style: "max-width:1080px;margin:0 auto;" }, topBar,
-      h("div", { style: "display:grid;grid-template-columns:repeat(3,1fr);gap:16px;" }, cards));
+  }
+  function accountLifecycleInfo(account) {
+    var trades = state.trades.filter(function (trade) { return trade.account_id === account.id; });
+    var dates = trades.map(function (trade) { return trade.date; }).filter(Boolean).sort();
+    var movements = accountMovementList(account);
+    var costs = movements.filter(function (event) { return event.type === "cost"; });
+    var payouts = movements.filter(function (event) { return event.type === "payout"; });
+    var cost = costs.reduce(function (sum, event) { return sum + (Number(event.amount) || 0); }, 0);
+    var payout = payouts.reduce(function (sum, event) { return sum + (Number(event.amount) || 0); }, 0);
+    var burnEvents = (Array.isArray(account.account_history) ? account.account_history : []).filter(function (event) { return event && event.to === "quemada"; });
+    var purchaseDate = costs.length ? costs.slice().sort(function (a, b) { return String(a.date || "").localeCompare(String(b.date || "")); })[0].date || "" : "";
+    return {
+      trades: trades, ops: trades.length, days: dates.length ? Array.from(new Set(dates)).length : null,
+      firstTrade: dates[0] || "", lastTrade: dates[dates.length - 1] || "",
+      costs: cost, payout: payout, hasCost: costs.length > 0, hasPayout: payouts.length > 0,
+      net: costs.length ? payout - cost : null, purchaseDate: purchaseDate,
+      burnedDate: burnEvents.length ? (burnEvents[burnEvents.length - 1].date || "") : ""
+    };
+  }
+  async function recordAccountMovement(account, type) {
+    if (!account || state.savingAccount) return;
+    var label = type === "cost" ? "Costo pagado (evaluación, reset u otra tarifa)" : "Retiro cobrado";
+    var rawAmount = window.prompt(label + " en USD. Usa un importe positivo:");
+    if (rawAmount == null) return;
+    var amount = Number(String(rawAmount).replace(/[$,\s]/g, ""));
+    if (!Number.isFinite(amount) || amount <= 0) { window.alert("Introduce un importe mayor que cero."); return; }
+    var date = window.prompt("Fecha del movimiento (AAAA-MM-DD):", todayISO());
+    if (date == null) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(Date.parse(date + "T12:00:00"))) { window.alert("La fecha debe usar el formato AAAA-MM-DD."); return; }
+    var note = window.prompt("Nota opcional (evaluación, reset, payout, referencia):", "") || "";
+    if (!isOnline()) { window.alert("Conéctate a internet para guardar el movimiento."); return; }
+    state.savingAccount = true; render();
+    try {
+      var history = Array.isArray(account.account_history) ? account.account_history.slice() : [];
+      history.push({ date: date, type: type, amount: Math.round(amount * 100) / 100, currency: "USD", note: note.trim(), created_at: new Date().toISOString() });
+      var result = await SB.from("accounts").update({ account_history: history }).eq("id", account.id).select().single();
+      if (result.error) throw result.error;
+      var updated = coerceAccount(result.data);
+      state.accounts = state.accounts.map(function (item) { return item.id === updated.id ? updated : item; });
+      saveCache();
+    } catch (error) {
+      window.alert("No se pudo guardar el movimiento. No se confirmó el cambio; inténtalo de nuevo.");
+    } finally {
+      state.savingAccount = false; render();
+    }
+  }
+  // Automatic trading-window clock. It refreshes every second while Bitácora is open.
+  // The schedule is recurring Monday-Friday, 8:30-11:00 AM America/New_York.
+  function updateAccountsScheduleClock() {
+    var clock = document.getElementById("accounts-schedule-clock");
+    var status = document.getElementById("accounts-schedule-status");
+    var detail = document.getElementById("accounts-schedule-detail");
+    var progress = document.getElementById("accounts-schedule-progress");
+    if (!clock || !status || !detail || !progress) return;
+    try {
+      var now = new Date();
+      var parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York", weekday: "short", hour: "2-digit",
+        minute: "2-digit", second: "2-digit", hourCycle: "h23"
+      }).formatToParts(now).reduce(function (out, part) { out[part.type] = part.value; return out; }, {});
+      var weekday = ["Mon", "Tue", "Wed", "Thu", "Fri"].indexOf(parts.weekday) >= 0;
+      var minute = Number(parts.hour) * 60 + Number(parts.minute);
+      var open = weekday && minute >= 510 && minute < 660;
+      clock.textContent = parts.hour + ":" + parts.minute + ":" + parts.second + " ET";
+      status.textContent = open ? "VENTANA ACTIVA" : "EN ESPERA · AUTOMÁTICO";
+      status.style.background = open ? "#E8F3EC" : "#F1EDE5";
+      status.style.color = open ? "#16865A" : "#6F6B63";
+      detail.textContent = open
+        ? "Ventana activa ahora. Cierra a las 11:00 AM ET."
+        : "Se repite de lunes a viernes, 8:30–11:00 AM ET. No necesitas activarla manualmente.";
+      progress.style.width = Math.max(0, Math.min(100, ((minute - 510) / 150) * 100)) + "%";
+      progress.style.opacity = open ? "1" : ".25";
+    } catch (e) {
+      clock.textContent = "Horario ET";
+      status.textContent = "HORARIO PROGRAMADO";
+      detail.textContent = "Lunes a viernes · 8:30–11:00 AM ET.";
+    }
+  }
+  function accountsScheduleView() {
+    if (!window.__bitacoraAccountsScheduleTimer) {
+      window.__bitacoraAccountsScheduleTimer = window.setInterval(updateAccountsScheduleClock, 1000);
+    }
+    var schedule = h("section", { class: "accounts-schedule", style: "background:#fff;border:1px solid #E7E4DC;border-radius:14px;padding:15px 16px;display:flex;flex-direction:column;gap:11px;" },
+      h("div", { style: "display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;" },
+        h("div", null,
+          h("div", { style: "font-size:10px;font-weight:750;letter-spacing:1.1px;color:#807B72;text-transform:uppercase;" }, "Horario automático · Nueva York"),
+          h("div", { id: "accounts-schedule-clock", style: "font-family:'Geist Mono',monospace;font-size:25px;font-weight:750;letter-spacing:-.6px;margin-top:5px;" }, "—:—:— ET"),
+          h("div", { id: "accounts-schedule-detail", style: "font-size:12px;color:#807B72;margin-top:4px;" }, "Lunes a viernes · 8:30–11:00 AM ET.")),
+        h("span", { id: "accounts-schedule-status", style: "display:inline-flex;align-items:center;border-radius:999px;padding:7px 10px;font-size:10px;font-weight:750;letter-spacing:.45px;background:#F1EDE5;color:#6F6B63;" }, "EN ESPERA · AUTOMÁTICO")),
+      h("div", { style: "height:5px;background:#F1EDE5;border-radius:999px;overflow:hidden;" },
+        h("div", { id: "accounts-schedule-progress", style: "height:100%;width:0%;background:#16865A;border-radius:999px;transition:width .5s linear;" })),
+      h("div", { style: "font-size:10.5px;color:#A39E94;line-height:1.45;" }, "El reloj y el estado se actualizan solos mientras Bitácora esté abierto. No ejecuta operaciones ni envía órdenes al mercado."));
+    window.setTimeout(updateAccountsScheduleClock, 0);
+    return schedule;
+  }
+
+  function accountsView() {
+    var all = state.accounts.slice();
+    var burned = all.filter(function (account) { return account.status === "quemada"; });
+    var liveStatuses = ["activa", "evaluacion", "fondeada", "payout_pedido", "payout_aprobado", "aprobada"];
+    var live = all.filter(function (account) { return liveStatuses.indexOf(account.status) >= 0; });
+    var infos = all.map(function (account) { return { account: account, info: accountLifecycleInfo(account) }; });
+    var costKnown = infos.filter(function (item) { return item.info.hasCost; });
+    var missingCost = infos.filter(function (item) { return !item.info.hasCost; });
+    var totalCost = infos.reduce(function (sum, item) { return sum + item.info.costs; }, 0);
+    var totalPayout = infos.reduce(function (sum, item) { return sum + item.info.payout; }, 0);
+    var totalNet = missingCost.length ? null : totalPayout - totalCost;
+    var filtered = infos.filter(function (item) {
+      if (state.accountFilter === "blown") return item.account.status === "quemada";
+      if (state.accountFilter === "live") return liveStatuses.indexOf(item.account.status) >= 0;
+      return true;
+    });
+    var moneyValue = function (value) { return "$" + Number(value).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 }); };
+    var muted = "color:#807B72;";
+    var panel = "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:16px;min-width:0;";
+    var metric = function (label, value, detail, color) {
+      return h("div", { style: panel },
+        h("div", { style: "font-size:11px;font-weight:600;color:#807B72;text-transform:uppercase;letter-spacing:.5px;" }, label),
+        h("div", { style: "font-family:'Geist Mono',monospace;font-size:25px;font-weight:700;letter-spacing:-.7px;margin-top:9px;" + (color ? "color:" + color + ";" : "") }, value),
+        h("div", { style: "font-size:11.5px;color:#A39E94;margin-top:6px;line-height:1.4;" }, detail));
+    };
+    var filters = h("div", { style: "display:flex;align-items:center;gap:7px;flex-wrap:wrap;" },
+      [["all", "Todas las cuentas"], ["blown", "Solo quemadas"], ["live", "Solo vivas"]].map(function (option) {
+        var active = state.accountFilter === option[0];
+        return h("button", { style: "border:1px solid " + (active ? "#16181C" : "#E2DDD3") + ";background:" + (active ? "#16181C" : "#fff") + ";color:" + (active ? "#fff" : "#54514A") + ";padding:8px 11px;border-radius:9px;font-size:12px;font-weight:600;cursor:pointer;", onClick: function () { state.accountFilter = option[0]; render(); } }, option[1]);
+      }),
+      h("span", { style: "font-size:11px;color:#A39E94;margin-left:auto;" }, filtered.length + " de " + all.length));
+    var heading = h("div", { style: "display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;" },
+      h("div", null,
+        h("div", { style: "font-size:11px;color:#A39E94;font-weight:700;letter-spacing:1.2px;" }, "09 / ACCOUNTS"),
+        h("h2", { style: "font-size:25px;line-height:1.15;letter-spacing:-.7px;margin:6px 0 4px;font-weight:750;" }, "Accounts"),
+        h("div", { style: "font-size:13px;color:#807B72;" }, "Ciclo de vida · Compradas · Quemadas · Autopsia")),
+      h("button", { style: "background:#16181C;color:#fff;border:0;border-radius:9px;padding:10px 14px;font-size:12.5px;font-weight:650;cursor:pointer;", onClick: openAccountAdd }, "+ Nueva cuenta"));
+    var topMetrics = h("div", { class: "accounts-kpis", style: "display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;" },
+      metric("Pagado en cuentas", missingCost.length ? "—" : moneyValue(totalCost), missingCost.length ? missingCost.length + " sin costo apuntado" : costKnown.length + " cuentas con costos"),
+      metric("Cobrado", moneyValue(totalPayout), infos.some(function (item) { return item.info.hasPayout; }) ? "Retiros registrados" : "Ningún retiro registrado", "#16915B"),
+      metric("Neto en tu bolsillo", totalNet == null ? "—" : (totalNet < 0 ? "−" : "+") + moneyValue(Math.abs(totalNet)), totalNet == null ? "Falta registrar el costo de " + missingCost.length + " cuenta(s)" : "Cobrado menos costos registrados", totalNet == null ? "#807B72" : (totalNet >= 0 ? "#16915B" : "#D6483B")),
+      metric("Quemadas", String(burned.length), all.length + " cuentas en total", burned.length ? "#D6483B" : null));
+    var note = missingCost.length ? h("div", { style: "background:#FBF7EF;border:1px solid #EDE1C9;border-radius:12px;padding:13px 15px;color:#65543B;font-size:12px;line-height:1.55;" },
+      h("strong", null, "El neto todavía no se puede calcular."),
+      " No hay un movimiento de tipo costo apuntado en " + missingCost.length + " cuenta(s), así que lo pagado en evaluaciones y resets no se sabe. No es cero: sería incorrecto asumir que las cuentas fueron gratis. Registra cada importe desde la tarjeta de la cuenta, en Movimientos.") : null;
+    var tableRows = filtered.map(function (item) {
+      var account = item.account, info = item.info;
+      var accountTitle = account.name + (account.firm ? " · " + account.firm : "");
+      var opsDays = info.days == null ? "sin dato" : String(info.days) + " días";
+      var netText = info.net == null ? "sin dato" : (info.net < 0 ? "−" : "+") + moneyValue(Math.abs(info.net));
+      var movementList = accountMovementList(account).slice().sort(function (a, b) { return String(b.date || "").localeCompare(String(a.date || "")); });
+      var movementContent = movementList.length ? movementList.slice(0, 4).map(function (event) {
+        return h("div", { style: "display:flex;gap:8px;justify-content:space-between;padding:5px 0;border-top:1px solid #F3EFE7;font-size:11.5px;" },
+          h("span", { style: "color:#807B72;min-width:0;" }, (event.date || "Sin fecha") + " · " + (event.type === "cost" ? "Costo" : "Payout") + (event.note ? " · " + event.note : "")),
+          h("strong", { style: "font-family:'Geist Mono',monospace;white-space:nowrap;color:" + (event.type === "cost" ? "#D6483B" : "#16915B") + ";" }, (event.type === "cost" ? "−" : "+") + moneyValue(event.amount)));
+      }) : [h("div", { style: "font-size:11.5px;color:#A39E94;padding:5px 0;" }, "Sin movimientos registrados. El costo aún es desconocido.")];
+      return h("tr", null,
+        h("td", { style: "padding:13px 12px;min-width:210px;" },
+          h("div", { style: "font-weight:700;font-size:12.5px;" }, accountTitle),
+          h("div", { style: "font-size:11px;color:#A39E94;margin-top:3px;" }, (KIND_LABEL[account.kind] || account.kind || "Cuenta") + " · " + (info.firstTrade && info.lastTrade ? fmtDate(info.firstTrade) + "–" + fmtDate(info.lastTrade) : "sin operaciones")),
+          h("div", { style: "display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;" },
+            h("button", { style: "border:1px solid #E2DDD3;background:#fff;border-radius:7px;padding:6px 8px;font-size:11px;font-weight:600;cursor:pointer;", onClick: function () { recordAccountMovement(account, "cost"); } }, "+ Costo"),
+            h("button", { style: "border:1px solid #E2DDD3;background:#fff;border-radius:7px;padding:6px 8px;font-size:11px;font-weight:600;cursor:pointer;", onClick: function () { recordAccountMovement(account, "payout"); } }, "+ Payout"),
+            h("button", { style: "border:1px solid #E2DDD3;background:#fff;border-radius:7px;padding:6px 8px;font-size:11px;font-weight:600;cursor:pointer;", onClick: function () { openAccountEdit(account); } }, "Editar estado"))),
+        h("td", { style: "padding:13px 12px;white-space:nowrap;" }, h("span", { style: statusStyle(account.status) }, statusLabel(account.status))),
+        h("td", { style: "padding:13px 12px;white-space:nowrap;font-size:12px;color:#807B72;" }, info.purchaseDate ? fmtDate(info.purchaseDate) : "sin dato"),
+        h("td", { style: "padding:13px 12px;white-space:nowrap;font-size:12px;color:#807B72;" }, info.burnedDate ? fmtDate(info.burnedDate) : "—"),
+        h("td", { style: "padding:13px 12px;white-space:nowrap;font-size:12px;" }, opsDays),
+        h("td", { style: "padding:13px 12px;text-align:right;font-family:'Geist Mono',monospace;font-size:12px;" }, info.ops ? String(info.ops) : "—"),
+        h("td", { style: "padding:13px 12px;text-align:right;white-space:nowrap;font-family:'Geist Mono',monospace;font-size:12px;" }, info.hasCost ? moneyValue(info.costs) : "sin dato"),
+        h("td", { style: "padding:13px 12px;text-align:right;white-space:nowrap;font-family:'Geist Mono',monospace;font-size:12px;color:#16915B;" }, info.hasPayout ? moneyValue(info.payout) : "—"),
+        h("td", { style: "padding:13px 12px;text-align:right;white-space:nowrap;font-family:'Geist Mono',monospace;font-size:12px;" + (info.net == null ? "color:#A39E94;" : (info.net >= 0 ? "color:#16915B;" : "color:#D6483B;")) }, netText),
+        h("td", { style: "padding:13px 12px;min-width:230px;" }, h("div", { style: "display:flex;flex-direction:column;gap:3px;" }, movementContent)));
+    });
+    var table = h("div", { style: "overflow-x:auto;max-width:100%;border:1px solid #ECE7DD;border-radius:13px;background:#fff;" },
+      h("table", { style: "width:100%;min-width:1120px;border-collapse:separate;border-spacing:0;text-align:left;" },
+        h("thead", null, h("tr", { style: "background:#FAF8F4;color:#807B72;font-size:10px;text-transform:uppercase;letter-spacing:.45px;" },
+          ["Account", "Status", "Comprada", "Quemada", "Operados", "Ops", "Costó", "Cobrado", "Neto", "Movimientos"].map(function (label) {
+            return h("th", { style: "padding:11px 12px;font-weight:700;border-bottom:1px solid #ECE7DD;white-space:nowrap;" }, label);
+          }))),
+        h("tbody", null, tableRows.length ? tableRows : [h("tr", null, h("td", { colSpan: 10, style: "padding:28px;text-align:center;color:#807B72;" }, "No hay cuentas en este filtro."))])));
+    var burnedSection;
+    if (!burned.length) {
+      burnedSection = h("div", { style: panel },
+        h("div", { style: "font-size:14px;font-weight:700;" }, "Qué se repite entre cuentas quemadas"),
+        h("div", { style: "font-size:12px;color:#807B72;margin-top:7px;line-height:1.5;" }, "Ninguna cuenta está marcada como quemada. Cuando cambies el estado de una cuenta a Quemada, aquí aparecerán sus setups y resultados registrados para comparar patrones."),
+        h("div", { style: "font-size:14px;font-weight:700;margin-top:16px;" }, "Autopsia de cada cuenta quemada"),
+        h("div", { style: "font-size:12px;color:#A39E94;margin-top:6px;" }, "Nada que examinar por ahora: no hay cuentas marcadas como quemadas."));
+    } else {
+      var setupCounts = {};
+      var burnedTrades = [];
+      burned.forEach(function (account) {
+        state.trades.filter(function (trade) { return trade.account_id === account.id; }).forEach(function (trade) {
+          burnedTrades.push({ account: account, trade: trade });
+          var key = String(trade.setup || "Sin setup");
+          setupCounts[key] = (setupCounts[key] || 0) + 1;
+        });
+      });
+      var repeated = Object.keys(setupCounts).map(function (key) { return { name: key, count: setupCounts[key] }; }).filter(function (item) { return item.count > 1; }).sort(function (a, b) { return b.count - a.count; });
+      burnedSection = h("div", { class: "accounts-autopsy", style: "display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;" },
+        h("div", { style: panel },
+          h("div", { style: "font-size:14px;font-weight:700;" }, "Qué se repite entre cuentas quemadas"),
+          repeated.length ? repeated.slice(0, 6).map(function (item) {
+            return h("div", { style: "display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid #F3EFE7;font-size:12px;" }, h("span", null, item.name), h("strong", { style: "font-family:'Geist Mono',monospace;" }, item.count + " ops"));
+          }) : h("div", { style: "font-size:12px;color:#807B72;margin-top:7px;" }, "No hay setups repetidos entre las operaciones registradas de cuentas quemadas."),
+          h("div", { style: "font-size:11px;color:#A39E94;margin-top:8px;" }, burnedTrades.length + " operaciones asociadas a cuentas quemadas; el análisis solo usa datos registrados.")),
+        h("div", { style: panel },
+          h("div", { style: "font-size:14px;font-weight:700;" }, "Autopsia de cada cuenta quemada"),
+          burned.map(function (account) {
+            var info = accountLifecycleInfo(account);
+            var ts = info.trades;
+            var net = ts.reduce(function (sum, trade) { return sum + Number(trade.pnl || 0); }, 0);
+            var notes = (Array.isArray(account.account_history) ? account.account_history : []).filter(function (event) { return event && event.to === "quemada"; }).map(function (event) { return event.note || ""; }).filter(Boolean);
+            return h("div", { style: "padding:10px 0;border-bottom:1px solid #F3EFE7;" },
+              h("div", { style: "font-size:12.5px;font-weight:700;" }, account.name),
+              h("div", { style: "font-size:11.5px;color:#807B72;margin-top:4px;" }, ts.length + " ops · " + (info.days == null ? "días operados sin dato" : info.days + " días operados") + " · P&L trades " + signed(net)),
+              h("div", { style: "font-size:11.5px;color:#A39E94;margin-top:4px;" }, notes.length ? notes.join(" · ") : "Sin motivo de quema registrado."));
+          })));
+    }
+    return h("div", { class: "accounts-lifecycle", style: "max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:16px;" },
+      heading,
+      accountsScheduleView(),
+      h("div", { style: "display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;" },
+        h("div", { style: "font-size:12px;color:#807B72;" }, all.length + " cuentas · " + burned.length + " quemadas · " + live.length + " vivas"),
+        filters),
+      topMetrics,
+      note,
+      h("div", null,
+        h("div", { style: "display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:9px;" },
+          h("div", { style: "font-size:15px;font-weight:750;letter-spacing:-.2px;" }, "Cada cuenta, desde la compra hasta el final"),
+          h("div", { style: "font-size:11px;color:#A39E94;" }, filtered.length + " cuentas")),
+        table,
+        h("div", { style: "font-size:11px;color:#A39E94;line-height:1.55;margin-top:8px;" }, "“Operados” son los días únicos con operaciones registradas en esa cuenta, desde la primera hasta la última operación. No equivalen al tiempo desde la compra hasta la quema. La fecha de compra se muestra solo si registraste un movimiento de costo."),
+      ),
+      burnedSection,
+      h("div", { style: "font-size:11px;color:#A39E94;border-top:1px solid #ECE7DD;padding-top:10px;" }, "Ventana operativa: 8:30 AM–11:00 AM ET"));
   }
 
   // ---------- dashboard ----------
