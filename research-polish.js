@@ -218,9 +218,12 @@
   }
   var lastPanelHtml = "";
   function mountResearchPanel() {
-    // Research quality lives in Insights y patrones, not in the Resumen dashboard.
+    // Mount only on the dedicated Research quality view. Read the actual page title,
+    // not all main text, so this cannot match content from another view.
     var main = document.querySelector("main");
-    if (!main || !/Insights y patrones/.test(textOf(main))) return;
+    var titleWrap = main && main.querySelector("header > div");
+    var title = titleWrap && titleWrap.firstElementChild;
+    if (!main || !title || textOf(title) !== "Research quality") return;
     var container = main.querySelector(".dc-scroll");
     if (!container) return;
     var html = researchPanelHtml();
