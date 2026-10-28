@@ -3780,7 +3780,8 @@
   }
 
   window.BitacoraStrategyLab = {
-    getStrategies: function () { return (state.settings.strategyLab || []).slice(); },\n    getTrades: function () { return state.trades.slice(); },
+    getStrategies: function () { return (state.settings.strategyLab || []).slice(); },
+    getTrades: function () { return state.trades.slice(); },
     saveStrategies: async function (strategies) {
       state.settings.strategyLab = Array.isArray(strategies) ? strategies.slice() : [];
       saveCache();
