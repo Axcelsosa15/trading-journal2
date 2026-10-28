@@ -132,7 +132,7 @@
     "¿Sigo dentro de mi límite de operaciones y pérdida diaria? (si no, no hay trade)",
   ];
   function defaultSettings() {
-    return { rules: { maxTradesPerDay: "", maxDailyLoss: "", maxWeeklyLoss: "" }, checklist: DEFAULT_CHECKLIST.slice(), onboardingDone: false };
+    return { rules: { maxTradesPerDay: "", maxDailyLoss: "", maxWeeklyLoss: "" }, checklist: DEFAULT_CHECKLIST.slice(), onboardingDone: false, strategyLab: [] };
   }
   function applySettings(data) {
     data = data || {};
