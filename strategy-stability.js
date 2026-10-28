@@ -23,6 +23,7 @@
   function textOf(el){return el?String(el.innerText||el.textContent||"").trim():"";}
   function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
   function readCache(){
+    if(window.BitacoraStrategyLab&&typeof window.BitacoraStrategyLab.getTrades==="function")return {trades:window.BitacoraStrategyLab.getTrades(),accounts:[]};
     var best=null;
     try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(!/^bitacora_cache_/.test(k||""))continue;var x=JSON.parse(localStorage.getItem(k));if(x&&Array.isArray(x.trades)&&(!best||(x.ts||0)>(best.ts||0)))best=x;}}catch(e){}
     return best||{trades:[],accounts:[]};
