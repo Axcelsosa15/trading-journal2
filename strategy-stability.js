@@ -61,6 +61,16 @@
     trades.forEach(function(t){tagsOf(t).forEach(function(tag){var m=tag.match(/^strategy:([^|]+?)(?:\|version:([^|]+))?$/i);if(!m)return;var name=m[1].trim(),version=(m[2]||"Unversioned").trim(),key=name+"::"+version;if(!out[key])out[key]={name:name,version:version,trades:[]};out[key].trades.push(t);});});
     return Object.keys(out).map(function(k){var x=out[k];x.stats=metric(x.trades);return x;});
   }
+  function showNotice(message){
+    var panel=document.querySelector("[data-sl-panel]");
+    if(!panel)return;
+    var notice=document.createElement("div");
+    notice.className="sl-status";
+    notice.setAttribute("role","status");
+    notice.textContent=message;
+    var form=panel.querySelector("[data-sl-form]");
+    if(form)form.insertAdjacentElement("afterend",notice);else panel.appendChild(notice);
+  }
   function mount(){
     var main=document.querySelector("main"),wrap=main&&main.querySelector("header > div"),title=wrap&&wrap.firstElementChild;
     if(!main||!title||String(title.textContent||"").trim()!=="Research quality")return;
@@ -75,7 +85,7 @@
       '<form class="sl-form" data-sl-form><input name="name" required maxlength="80" placeholder="Nombre de estrategia"><input name="version" required maxlength="30" placeholder="Versión (ej. 1.0)"><select name="status"><option>En desarrollo</option><option>Recopilando datos</option><option>En validación</option><option>En observación</option><option>Estable según criterios</option><option>En deterioro</option></select><input name="rules" maxlength="160" placeholder="Reglas / cambio de versión"><button class="sl-btn" type="submit">Guardar versión</button></form>'+
       '<div class="sl-list">'+(list||'<div class="sl-status">Todavía no hay versiones registradas. Crea una versión arriba y etiqueta las operaciones correspondientes.</div>')+'</div>';
     if(panel.__slHtml===markup)return; panel.innerHTML=markup; panel.__slHtml=markup;
-    var form=panel.querySelector("[data-sl-form]");if(form&&!form.__slBound){form.__slBound=true;form.addEventListener("submit",function(e){e.preventDefault();var fd=new FormData(form),name=String(fd.get("name")||"").trim(),version=String(fd.get("version")||"").trim();if(!name||!version)return;var x=readLab(),i=x.strategies.findIndex(function(s){return s.name===name&&s.version===version;});var now=new Date().toISOString();var previous=i>=0?x.strategies[i]:null;var item={name:name,version:version,status:String(fd.get("status")||"En desarrollo"),rules:String(fd.get("rules")||"").trim(),created:previous&&previous.created||now,updatedAt:now};if(i>=0)x.strategies[i]=item;else x.strategies.push(item);Promise.resolve(saveLab(x)).then(function(result){if(result&&result.ok===false)toast("Versión guardada localmente; sincronización pendiente.");mount();});});}
+    var form=panel.querySelector("[data-sl-form]");if(form&&!form.__slBound){form.__slBound=true;form.addEventListener("submit",function(e){e.preventDefault();var fd=new FormData(form),name=String(fd.get("name")||"").trim(),version=String(fd.get("version")||"").trim();if(!name||!version)return;var x=readLab(),i=x.strategies.findIndex(function(s){return s.name===name&&s.version===version;});var now=new Date().toISOString();var previous=i>=0?x.strategies[i]:null;var item={name:name,version:version,status:String(fd.get("status")||"En desarrollo"),rules:String(fd.get("rules")||"").trim(),created:previous&&previous.created||now,updatedAt:now};if(i>=0)x.strategies[i]=item;else x.strategies.push(item);Promise.resolve(saveLab(x)).then(function(result){mount();if(result&&result.ok===false)showNotice("Versión guardada localmente; sincronización pendiente.");}).catch(function(){mount();showNotice("Versión guardada localmente; sincronización pendiente.");});});}
   }
   function strategyPicker(){
     var root=document.getElementById("modal-root");if(!root||!/Nueva operaci|Editar operaci/.test(textOf(root))||root.querySelector("[data-sl-picker]"))return;
