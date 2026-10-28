@@ -2236,7 +2236,7 @@
         h("h2", { style: "font-size:25px;line-height:1.15;letter-spacing:-.7px;margin:6px 0 4px;font-weight:750;" }, "Accounts"),
         h("div", { style: "font-size:13px;color:#807B72;" }, "Ciclo de vida · Compradas · Quemadas · Autopsia")),
       h("button", { style: "background:#16181C;color:#fff;border:0;border-radius:9px;padding:10px 14px;font-size:12.5px;font-weight:650;cursor:pointer;", onClick: openAccountAdd }, "+ Nueva cuenta"));
-    var topMetrics = h("div", { style: "display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;" },
+    var topMetrics = h("div", { class: "accounts-kpis", style: "display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;" },
       metric("Pagado en cuentas", missingCost.length ? "—" : moneyValue(totalCost), missingCost.length ? missingCost.length + " sin costo apuntado" : costKnown.length + " cuentas con costos"),
       metric("Cobrado", moneyValue(totalPayout), infos.some(function (item) { return item.info.hasPayout; }) ? "Retiros registrados" : "Ningún retiro registrado", "#16915B"),
       metric("Neto en tu bolsillo", totalNet == null ? "—" : (totalNet < 0 ? "−" : "+") + moneyValue(Math.abs(totalNet)), totalNet == null ? "Falta registrar el costo de " + missingCost.length + " cuenta(s)" : "Cobrado menos costos registrados", totalNet == null ? "#807B72" : (totalNet >= 0 ? "#16915B" : "#D6483B")),
@@ -2298,7 +2298,7 @@
         });
       });
       var repeated = Object.keys(setupCounts).map(function (key) { return { name: key, count: setupCounts[key] }; }).filter(function (item) { return item.count > 1; }).sort(function (a, b) { return b.count - a.count; });
-      burnedSection = h("div", { style: "display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;" },
+      burnedSection = h("div", { class: "accounts-autopsy", style: "display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;" },
         h("div", { style: panel },
           h("div", { style: "font-size:14px;font-weight:700;" }, "Qué se repite entre cuentas quemadas"),
           repeated.length ? repeated.slice(0, 6).map(function (item) {
@@ -2318,7 +2318,7 @@
               h("div", { style: "font-size:11.5px;color:#A39E94;margin-top:4px;" }, notes.length ? notes.join(" · ") : "Sin motivo de quema registrado."));
           })));
     }
-    return h("div", { style: "max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:16px;" },
+    return h("div", { class: "accounts-lifecycle", style: "max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:16px;" },
       heading,
       h("div", { style: "display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;" },
         h("div", { style: "font-size:12px;color:#807B72;" }, all.length + " cuentas · " + burned.length + " quemadas · " + live.length + " vivas"),
