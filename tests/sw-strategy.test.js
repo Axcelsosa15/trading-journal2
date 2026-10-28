@@ -10,4 +10,6 @@ console.log("Code is network-first:", /function networkFirst/.test(sw) && /isCod
 console.log("Navigations + html/js/css treated as code:", /req\.mode === "navigate" \|\| \/\\\.\(html\|js\|css\)\$\//.test(sw));
 console.log("networkFirst falls back to cache offline:", /networkFirst[\s\S]*catch[\s\S]*caches\.open/.test(sw));
 console.log("Supabase still never cached:", /supabase\\?\.co\$\/\.test\(url\.hostname\)\) return/.test(sw));
+console.log("Strategy stability module is included in offline shell:", /\.\/strategy-stability\.js/.test(sw));
+console.log("Cache version is bumped to v7:", /var CACHE = "bitacora-v7"/.test(sw));
 console.log("SW STRATEGY SMOKE OK");
