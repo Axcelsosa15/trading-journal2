@@ -20,7 +20,8 @@
     @media(max-width:820px){.sl-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.sl-form{grid-template-columns:1fr 1fr}.sl-form button{grid-column:1/-1}.sl-row{grid-template-columns:1fr auto}.sl-row .sl-chip{grid-column:1/-1;justify-self:start}}
   `;
   if (!document.getElementById("strategy-stability-style")) { var style=document.createElement("style"); style.id="strategy-stability-style"; style.textContent=css; document.head.appendChild(style); }
-  function textOf(el){return el?String(el.innerText||el.textContent||"").trim():"";}\n  function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+  function textOf(el){return el?String(el.innerText||el.textContent||"").trim():"";}
+  function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
   function readCache(){
     var best=null;
     try{for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(!/^bitacora_cache_/.test(k||""))continue;var x=JSON.parse(localStorage.getItem(k));if(x&&Array.isArray(x.trades)&&(!best||(x.ts||0)>(best.ts||0)))best=x;}}catch(e){}
@@ -78,7 +79,8 @@
     root.addEventListener("click",function(ev){var b=ev.target&&ev.target.closest?ev.target.closest("button"):null;if(!b||!/Guardar operaci|Guardar cambios/.test(textOf(b)))return;var pick=root.querySelector("[data-sl-selected]");if(!pick||!pick.value)return;var input=root.querySelector('input[placeholder*="NY open"]');if(!input)return;var vals=input.value.split(",").map(function(v){return v.trim();}).filter(Boolean);if(vals.indexOf(pick.value)<0)vals.push(pick.value);input.value=vals.join(", ");input.dispatchEvent(new Event("input",{bubbles:true}));},true);
   }
   var observer=new MutationObserver(function(){if(!window.__slQueued){window.__slQueued=true;requestAnimationFrame(function(){window.__slQueued=false;mount();});}});
-  observer.observe(document.documentElement,{childList:true,subtree:true});\n  var modalObserver=new MutationObserver(function(){strategyPicker();bindStrategyTradeSave();});modalObserver.observe(document.documentElement,{childList:true,subtree:true});
+  observer.observe(document.documentElement,{childList:true,subtree:true});
+  var modalObserver=new MutationObserver(function(){strategyPicker();bindStrategyTradeSave();});modalObserver.observe(document.documentElement,{childList:true,subtree:true});
   window.addEventListener("focus",mount);window.addEventListener("storage",mount);
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",mount);else mount();
 })();
