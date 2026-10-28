@@ -82,7 +82,7 @@ headless smoke tests that boot the app with a mocked Supabase client.
 
 ```sh
 npm install          # installs jsdom
-npm run check        # node --check on app.js / sw.js
+npm run check        # node --check on app.js / sw.js / strategy-stability.js
 npm test             # runs tests/*.test.js
 ```
 
