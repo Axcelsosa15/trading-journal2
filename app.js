@@ -1882,6 +1882,7 @@
         navItem("calendar", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4.5" width="18" height="16" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/></svg>', "Calendario"),
         navItem("analytics", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><line x1="4" y1="20" x2="4" y2="13"/><line x1="10" y1="20" x2="10" y2="5"/><line x1="16" y1="20" x2="16" y2="9"/><line x1="22" y1="20" x2="22" y2="15"/></svg>', "Analítica"),
         navItem("insights", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V18h6v-1.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg>', "Insights"),
+        navItem("research", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 19V5"/><path d="M4 19h17"/><path d="M7 15l4-5 3 2 5-7"/></svg>', "Research quality"),
         navItem("stats", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 19h16"/><path d="M4 5v14"/><path d="M8 15l3-4 3 2 4-6"/><circle cx="8" cy="15" r="0.6" fill="currentColor"/></svg>', "Estadísticas"),
         navItem("correlations", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="6" cy="17" r="1.6"/><circle cx="10" cy="11" r="1.6"/><circle cx="14" cy="13" r="1.6"/><circle cx="18" cy="6" r="1.6"/><path d="M4 21V4" stroke-width="1.4"/><path d="M4 21h17" stroke-width="1.4"/></svg>', "Correlaciones"),
         navItem("journal", '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v14H6.5A2.5 2.5 0 0 0 4 19.5z"/><line x1="4" y1="19.5" x2="4" y2="5.5"/><line x1="20" y1="17" x2="20" y2="21"/><path d="M6.5 21H20"/></svg>', "Diario"),
@@ -1907,7 +1908,7 @@
     );
   }
 
-  var TITLES = { dashboard: "Resumen", trades: "Operaciones", calendar: "Calendario de resultados", analytics: "Analítica", insights: "Insights y patrones", stats: "Estadísticas avanzadas", correlations: "Correlaciones con tus resultados", journal: "Diario de trading", accounts: "Cuentas", settings: "Ajustes" };
+  var TITLES = { dashboard: "Resumen", trades: "Operaciones", calendar: "Calendario de resultados", analytics: "Analítica", insights: "Insights y patrones", research: "Research quality", stats: "Estadísticas avanzadas", correlations: "Correlaciones con tus resultados", journal: "Diario de trading", accounts: "Cuentas", settings: "Ajustes" };
 
   function mainColumn() {
     // Fade the body only when switching views (not on in-view re-renders like
@@ -1987,6 +1988,7 @@
       case "calendar": return calendarView();
       case "analytics": return analyticsView();
       case "insights": return insightsView();
+      case "research": return researchView();
       case "stats": return statsView();
       case "correlations": return correlationsView();
       case "journal": return journalView();
@@ -2516,6 +2518,13 @@
         h("div", { style: "font-size:13.5px;font-weight:600;color:#16181C;margin-bottom:3px;" }, ins.title),
         h("div", { style: "font-size:12.5px;color:#807B72;line-height:1.5;" }, ins.detail)));
   }
+  function researchView() {
+    return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:14px;" },
+      h("div", { style: "background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:20px;" },
+        h("div", { style: "font-size:15px;font-weight:600;margin-bottom:5px;" }, "Research quality"),
+        h("div", { style: "font-size:13px;color:#807B72;line-height:1.6;" }, "Panel de evaluación del research, cobertura de datos y comparación de hipótesis. Las métricas se cargan aquí automáticamente.")));
+  }
+
   function insightsView() {
     var wrap = function (kids) { return h("div", { style: "max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:14px;" }, kids); };
     if (scopedTrades().length < INSIGHTS_MIN)
