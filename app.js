@@ -132,7 +132,7 @@
     "¿Sigo dentro de mi límite de operaciones y pérdida diaria? (si no, no hay trade)",
   ];
   function defaultSettings() {
-    return { rules: { maxTradesPerDay: "", maxDailyLoss: "", maxWeeklyLoss: "" }, checklist: DEFAULT_CHECKLIST.slice(), onboardingDone: false };
+    return { rules: { maxTradesPerDay: "", maxDailyLoss: "", maxWeeklyLoss: "" }, checklist: DEFAULT_CHECKLIST.slice(), onboardingDone: false, strategyLab: [] };
   }
   function applySettings(data) {
     data = data || {};
@@ -145,6 +145,7 @@
       },
       checklist: Array.isArray(data.checklist) && data.checklist.length ? data.checklist : DEFAULT_CHECKLIST.slice(),
       onboardingDone: !!data.onboardingDone,
+      strategyLab: Array.isArray(data.strategyLab) ? data.strategyLab : [],
     };
   }
   var state = {
@@ -3778,6 +3779,18 @@
     });
   }
 
+  window.BitacoraStrategyLab = {
+    getStrategies: function () { return (state.settings.strategyLab || []).slice(); },
+    getTrades: function () { return state.trades.slice(); },
+    saveStrategies: async function (strategies) {
+      state.settings.strategyLab = Array.isArray(strategies) ? strategies.slice() : [];
+      saveCache();
+      if (!state.user || !isOnline()) return { ok: false, reason: "offline" };
+      var result = await SB.from("user_settings").upsert({ user_id: state.user.id, data: state.settings, updated_at: new Date().toISOString() }, { onConflict: "user_id" }).select().single();
+      if (result.error) return { ok: false, reason: result.error.message };
+      applySettings(result.data && result.data.data ? result.data.data : state.settings); saveCache(); return { ok: true };
+    }
+  };
   initTheme();
   render();
 })();
