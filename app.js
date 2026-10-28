@@ -2234,7 +2234,12 @@
     var status = document.getElementById("accounts-schedule-status");
     var detail = document.getElementById("accounts-schedule-detail");
     var progress = document.getElementById("accounts-schedule-progress");
-    if (!clock || !status || !detail || !progress) return;
+    if (!clock || !status || !detail || !progress) {
+      // The Accounts view is no longer on screen: stop ticking instead of
+      // leaking a timer for the rest of the session.
+      stopAccountsScheduleClock();
+      return;
+    }
     try {
       var now = new Date();
       var parts = new Intl.DateTimeFormat("en-US", {
@@ -2257,6 +2262,12 @@
       clock.textContent = "Horario ET";
       status.textContent = "HORARIO PROGRAMADO";
       detail.textContent = "Lunes a viernes · 8:30–11:00 AM ET.";
+    }
+  }
+  function stopAccountsScheduleClock() {
+    if (window.__bitacoraAccountsScheduleTimer) {
+      window.clearInterval(window.__bitacoraAccountsScheduleTimer);
+      window.__bitacoraAccountsScheduleTimer = null;
     }
   }
   function accountsScheduleView() {
@@ -2340,7 +2351,8 @@
           h("div", { style: "display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;" },
             h("button", { style: "border:1px solid #E2DDD3;background:#fff;border-radius:7px;padding:6px 8px;font-size:11px;font-weight:600;cursor:pointer;", onClick: function () { recordAccountMovement(account, "cost"); } }, "+ Costo"),
             h("button", { style: "border:1px solid #E2DDD3;background:#fff;border-radius:7px;padding:6px 8px;font-size:11px;font-weight:600;cursor:pointer;", onClick: function () { recordAccountMovement(account, "payout"); } }, "+ Payout"),
-            h("button", { style: "border:1px solid #E2DDD3;background:#fff;border-radius:7px;padding:6px 8px;font-size:11px;font-weight:600;cursor:pointer;", onClick: function () { openAccountEdit(account); } }, "Editar estado"))),
+            h("button", { style: "border:1px solid #E2DDD3;background:#fff;border-radius:7px;padding:6px 8px;font-size:11px;font-weight:600;cursor:pointer;", onClick: function () { openAccountEdit(account); } }, "Editar estado"),
+            h("button", { style: "border:1px solid #E2DDD3;background:#fff;border-radius:7px;padding:6px 8px;font-size:11px;font-weight:600;cursor:pointer;", onClick: function () { setScopeAccount(account.id); setView("trades"); } }, "Ver operaciones"))),
         h("td", { style: "padding:13px 12px;white-space:nowrap;" }, h("span", { style: statusStyle(account.status) }, statusLabel(account.status))),
         h("td", { style: "padding:13px 12px;white-space:nowrap;font-size:12px;color:#807B72;" }, info.purchaseDate ? fmtDate(info.purchaseDate) : "sin dato"),
         h("td", { style: "padding:13px 12px;white-space:nowrap;font-size:12px;color:#807B72;" }, info.burnedDate ? fmtDate(info.burnedDate) : "—"),
