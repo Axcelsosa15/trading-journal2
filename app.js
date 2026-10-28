@@ -250,7 +250,7 @@
     return { symbol: "MES", type: "future", side: "long", contracts: 1, entry: "", exit: "", date: todayISO(), time: "", setup: "Ruptura", emotion: "Tranquilo", rating: 3, note: "", account_id: "", tags: "", mae: "", mfe: "", commission: "", screenshot_path: "", _imageFile: null };
   }
   function blankAccountDraft() {
-    return { name: "", kind: "fondeo", firm: "", balance: "", currency: "USD", phase: "", status: "activa", profit_target: "", max_drawdown: "", notes: "" };
+    return { name: "", kind: "fondeo", firm: "", balance: "", currency: "USD", phase: "", status: "activa", profit_target: "", max_drawdown: "", notes: "", account_history: [], event_date: todayISO(), event_note: "" };
   }
   function blankJournalDraft() {
     return { date: todayISO(), mood: "Enfocado", title: "", body: "", lesson: "" };
@@ -265,7 +265,7 @@
     return String(str || "").split(",").map(function (s) { return s.trim(); }).filter(function (s, i, a) { return s && a.indexOf(s) === i; });
   }
   function coerceAccount(r) {
-    return { id: r.id, name: r.name, kind: r.kind, firm: r.firm || "", balance: Number(r.balance), currency: r.currency || "USD", phase: r.phase || "", status: r.status, profit_target: r.profit_target == null ? "" : Number(r.profit_target), max_drawdown: r.max_drawdown == null ? "" : Number(r.max_drawdown), notes: r.notes || "" };
+    return { id: r.id, name: r.name, kind: r.kind, firm: r.firm || "", balance: Number(r.balance), currency: r.currency || "USD", phase: r.phase || "", status: r.status, profit_target: r.profit_target == null ? "" : Number(r.profit_target), max_drawdown: r.max_drawdown == null ? "" : Number(r.max_drawdown), notes: r.notes || "", account_history: Array.isArray(r.account_history) ? r.account_history : [] };
   }
   function coerceJournal(r) {
     return { id: r.id, date: r.date, mood: r.mood, title: r.title, body: r.body || "", lesson: r.lesson || "" };
@@ -1038,7 +1038,7 @@
       // Accounts before trades: trades.account_id is a foreign key into accounts.
       if (accounts.length) {
         var accRows = accounts.map(function (a) {
-          return { id: a.id, name: a.name, kind: a.kind, firm: a.firm || null, balance: Number(a.balance) || 0, currency: a.currency || "USD", phase: a.phase || null, status: a.status || "activa", profit_target: a.profit_target === "" || a.profit_target == null ? null : Number(a.profit_target), max_drawdown: a.max_drawdown === "" || a.max_drawdown == null ? null : Number(a.max_drawdown), notes: a.notes || "" };
+          return { id: a.id, name: a.name, kind: a.kind, firm: a.firm || null, balance: Number(a.balance) || 0, currency: a.currency || "USD", phase: a.phase || null, status: a.status || "activa", profit_target: a.profit_target === "" || a.profit_target == null ? null : Number(a.profit_target), max_drawdown: a.max_drawdown === "" || a.max_drawdown == null ? null : Number(a.max_drawdown), notes: a.notes || "", account_history: Array.isArray(a.account_history) ? a.account_history : [] };
         });
         var ar = await SB.from("accounts").upsert(accRows, { onConflict: "id" }).select();
         if (ar.error) throw ar.error;
@@ -1376,11 +1376,26 @@
     if (!isOnline()) { window.alert("Necesitas conexión para crear o editar cuentas."); return; }
     state.savingAccount = true; renderModal();
     try {
+      var existingAccount = state.accountEditId ? state.accounts.find(function (a) { return a.id === state.accountEditId; }) : null;
+      var history = Array.isArray(d.account_history) ? d.account_history.slice() : (existingAccount && Array.isArray(existingAccount.account_history) ? existingAccount.account_history.slice() : []);
+      var statusChanged = !!existingAccount && existingAccount.status !== d.status;
+      var eventNote = String(d.event_note || "").trim();
+      if (!existingAccount || statusChanged || eventNote) {
+        history.push({
+          date: d.event_date || todayISO(),
+          type: !existingAccount ? "created" : (statusChanged ? "status_change" : "note"),
+          from: existingAccount ? existingAccount.status : "",
+          to: d.status,
+          note: eventNote || (!existingAccount ? "Cuenta creada" : (statusChanged ? "Estado cambiado de " + existingAccount.status + " a " + d.status : "Evento registrado")),
+          created_at: new Date().toISOString()
+        });
+      }
       var row = {
         name: d.name.trim(), kind: d.kind, firm: d.firm || null, balance: Number(d.balance) || 0, currency: d.currency || "USD",
         phase: d.phase || null, status: d.status,
         profit_target: d.profit_target === "" ? null : Number(d.profit_target),
         max_drawdown: d.max_drawdown === "" ? null : Number(d.max_drawdown), notes: d.notes,
+        account_history: history
       };
       if (state.accountEditId) {
         var up = await SB.from("accounts").update(row).eq("id", state.accountEditId).select().single();
@@ -1402,15 +1417,16 @@
   async function deleteAccount() {
     var id = state.accountEditId;
     if (!id) return;
-    if (!isOnline()) { window.alert("Necesitas conexión para eliminar cuentas."); return; }
-    if (!window.confirm("¿Eliminar esta cuenta? Las operaciones asociadas se conservarán pero quedarán sin cuenta.")) return;
-    var res = await SB.from("accounts").delete().eq("id", id);
-    if (res.error) { window.alert("No se pudo eliminar: " + res.error.message); return; }
-    state.accounts = state.accounts.filter(function (a) { return a.id !== id; });
-    state.trades = state.trades.map(function (t) { return t.account_id === id ? Object.assign({}, t, { account_id: null }) : t; });
-    // If we were scoped to the deleted account, fall back to the whole app.
-    if (state.scopeAccount === id) setScopeAccount("all");
-    if (state.fAccount === id) state.fAccount = "all";
+    if (!isOnline()) { window.alert("Necesitas conexión para archivar cuentas."); return; }
+    if (!window.confirm("¿Archivar esta cuenta? Se conservarán sus operaciones y todo su historial. Puedes seguir consultándola.")) return;
+    var account = state.accounts.find(function (a) { return a.id === id; });
+    if (!account) return;
+    var history = Array.isArray(account.account_history) ? account.account_history.slice() : [];
+    history.push({ date: todayISO(), type: "status_change", from: account.status, to: "archivada", note: "Cuenta archivada", created_at: new Date().toISOString() });
+    var res = await SB.from("accounts").update({ status: "archivada", account_history: history }).eq("id", id).select().single();
+    if (res.error) { window.alert("No se pudo archivar la cuenta: " + res.error.message); return; }
+    var updated = coerceAccount(res.data);
+    state.accounts = state.accounts.map(function (a) { return a.id === id ? updated : a; });
     saveCache();
     closeAccountAdd();
     render();
@@ -1418,7 +1434,7 @@
   function openAccountAdd() { state.accountEditId = null; state.accountDraft = blankAccountDraft(); state.showAccountAdd = true; renderModal(); }
   function openAccountEdit(a) {
     state.accountEditId = a.id;
-    state.accountDraft = { name: a.name, kind: a.kind, firm: a.firm, balance: a.balance, currency: a.currency, phase: a.phase, status: a.status, profit_target: a.profit_target, max_drawdown: a.max_drawdown, notes: a.notes };
+    state.accountDraft = { name: a.name, kind: a.kind, firm: a.firm, balance: a.balance, currency: a.currency, phase: a.phase, status: a.status, profit_target: a.profit_target, max_drawdown: a.max_drawdown, notes: a.notes, account_history: Array.isArray(a.account_history) ? a.account_history.slice() : [], event_date: todayISO(), event_note: "" };
     state.showAccountAdd = true; renderModal();
   }
   function closeAccountAdd() { state.showAccountAdd = false; state.accountEditId = null; renderModal(); }
@@ -2105,12 +2121,19 @@
     return "display:inline-flex;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:" + (map[kind] || "#F1EDE5;color:#54514A");
   }
   function statusStyle(status) {
-    var map = { activa: "#E8F3EC;color:#16915B", aprobada: "#E8F3EC;color:#16915B", quemada: "#FBEAE7;color:#D6483B", pausada: "#FBF1E6;color:#C77B2A", cerrada: "#F1EDE5;color:#54514A" };
+    var map = { activa: "#E8F3EC;color:#16915B", evaluacion: "#EAF0F7;color:#3D6FB0", fondeada: "#E8F3EC;color:#16915B", payout_pedido: "#FBF1E6;color:#C77B2A", payout_aprobado: "#E8F3EC;color:#16915B", aprobada: "#E8F3EC;color:#16915B", quemada: "#FBEAE7;color:#D6483B", pausada: "#FBF1E6;color:#C77B2A", cerrada: "#F1EDE5;color:#54514A", archivada: "#F1EDE5;color:#807B72" };
     return "display:inline-flex;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:" + (map[status] || "#F1EDE5;color:#54514A");
   }
+  function statusLabel(status) {
+    var labels = { activa: "Activa", evaluacion: "Evaluación", fondeada: "Fondeada", payout_pedido: "Payout pedido", payout_aprobado: "Payout aprobado", aprobada: "Aprobada", quemada: "Quemada", pausada: "En pausa", cerrada: "Cerrada", archivada: "Archivada" };
+    return labels[status] || String(status || "Sin estado");
+  }
   function accountsView() {
-    var topBar = h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;" },
-      h("div", { style: "font-size:13px;color:#A39E94;" }, state.accounts.length + (state.accounts.length === 1 ? " cuenta" : " cuentas")),
+    var burnedCount = state.accounts.filter(function (a) { return a.status === "quemada"; }).length;
+    var activeCount = state.accounts.filter(function (a) { return ["activa", "evaluacion", "fondeada", "payout_pedido"].indexOf(a.status) >= 0; }).length;
+    var totalNet = state.accounts.reduce(function (sum, a) { return sum + accountStats(a.id).net; }, 0);
+    var topBar = h("div", { style: "display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap;" },
+      h("div", { style: "font-size:13px;color:#A39E94;" }, state.accounts.length + (state.accounts.length === 1 ? " cuenta" : " cuentas") + " · " + activeCount + " activas · " + burnedCount + " quemadas · P&L " + signed(totalNet)),
       h("button", { style: "display:flex;align-items:center;gap:7px;background:#16181C;color:#fff;font-weight:600;font-size:13px;padding:9px 15px;border-radius:9px;", onClick: openAccountAdd },
         icon('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'), "Nueva cuenta"));
     if (!state.accounts.length) {
@@ -2139,6 +2162,16 @@
       var viewBtn = h("button", { style: "flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:#16181C;color:#fff;font-weight:600;font-size:12.5px;padding:9px;border-radius:9px;border:none;cursor:pointer;", onClick: function () { setScopeAccount(a.id); setView("trades"); } },
         icon('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="18" r="1.3" fill="currentColor" stroke="none"/></svg>'), "Ver operaciones");
       var editBtn = h("button", { style: "flex:none;background:#fff;border:1px solid #E2DDD3;color:#54514A;font-weight:600;font-size:12.5px;padding:9px 14px;border-radius:9px;cursor:pointer;", hoverBg: "#FAF8F4", onClick: function () { openAccountEdit(a); } }, "Editar");
+      var recentEvents = (Array.isArray(a.account_history) ? a.account_history : []).slice(-3).reverse();
+      var historyPanel = recentEvents.length ? h("div", { style: "border-top:1px solid #F3EFE7;margin-top:8px;padding-top:8px;display:flex;flex-direction:column;gap:6px;" },
+        h("div", { style: "font-size:10.5px;font-weight:700;color:#807B72;text-transform:uppercase;letter-spacing:.4px;" }, "Historial de cuenta"),
+        recentEvents.map(function (ev) {
+          var label = ev.date || "";
+          var transition = ev.from && ev.to && ev.from !== ev.to ? " · " + ev.from + " → " + ev.to : "";
+          return h("div", { style: "font-size:11.5px;color:#807B72;line-height:1.45;" },
+            h("span", { style: "font-family:'Geist Mono',monospace;color:#A39E94;" }, label),
+            " · ", String(ev.note || "Evento registrado"), transition);
+        })) : null;
       return h("div", { style: "text-align:left;background:#fff;border:1px solid #ECE7DD;border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:4px;" },
         h("div", { style: "display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px;gap:8px;" },
           h("div", { style: "min-width:0;" },
@@ -2146,8 +2179,9 @@
             a.firm ? h("div", { style: "font-size:12px;color:#A39E94;margin-top:2px;" }, a.firm) : null),
           h("div", { style: "display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex:none;" },
             h("span", { style: kindStyle(a.kind) }, KIND_LABEL[a.kind] || a.kind),
-            h("span", { style: statusStyle(a.status) }, a.status.charAt(0).toUpperCase() + a.status.slice(1)))),
+            h("span", { style: statusStyle(a.status) }, statusLabel(a.status)))),
         h("div", { style: "border-top:1px solid #F3EFE7;margin-top:4px;padding-top:8px;" }, rows),
+        historyPanel,
         h("div", { style: "display:flex;gap:8px;margin-top:14px;" }, viewBtn, editBtn));
     });
     return h("div", { style: "max-width:1080px;margin:0 auto;" }, topBar,
@@ -3655,17 +3689,23 @@
         field("Balance", fieldInput(d, "balance", { type: "number", step: "0.01", placeholder: "0.00", style: mono })),
         field("Moneda", fieldSelect(d, "currency", [["USD", "USD"], ["EUR", "EUR"], ["GBP", "GBP"], ["MXN", "MXN"]]))),
       h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
-        field("Estado", fieldSelect(d, "status", [["activa", "Activa"], ["aprobada", "Aprobada"], ["quemada", "Quemada"], ["pausada", "Pausada"], ["cerrada", "Cerrada"]])),
+        field("Estado", fieldSelect(d, "status", [["evaluacion", "Evaluación"], ["activa", "Activa"], ["fondeada", "Fondeada"], ["payout_pedido", "Payout pedido"], ["payout_aprobado", "Payout aprobado"], ["aprobada", "Aprobada"], ["quemada", "Quemada"], ["pausada", "En pausa"], ["cerrada", "Cerrada"], ["archivada", "Archivada"]])),
         field("Fase", fieldInput(d, "phase", { placeholder: "Evaluación, Fase 1, Fondeada…", style: base }))),
       h("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:14px;" },
         field("Objetivo de beneficio", fieldInput(d, "profit_target", { type: "number", step: "0.01", placeholder: "opcional", style: mono })),
         field("Drawdown máx.", fieldInput(d, "max_drawdown", { type: "number", step: "0.01", placeholder: "opcional", style: mono }))),
       field("Notas", notesTa),
+      h("div", { style: "border-top:1px solid #ECE7DD;padding-top:12px;display:flex;flex-direction:column;gap:10px;" },
+        h("div", { style: "font-size:12px;font-weight:700;color:#54514A;" }, "Registrar evento / motivo del cambio"),
+        h("div", { style: "display:grid;grid-template-columns:1fr 2fr;gap:10px;" },
+          field("Fecha del evento", fieldInput(d, "event_date", { type: "date", style: mono })),
+          field("Nota / motivo", fieldInput(d, "event_note", { placeholder: "Ej. límite de pérdida excedido, payout recibido, reset comprado…", style: base }))),
+        h("div", { style: "font-size:11px;color:#A39E94;line-height:1.45;" }, "Al guardar se añade al historial sin borrar eventos anteriores. Si cambias el estado, el cambio también queda registrado.")),
     ];
     var footer = [
       h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #E2DDD3;background:#fff;font-weight:600;font-size:13.5px;", hoverBg: "#FAF8F4", onClick: closeAccountAdd }, "Cancelar"),
     ];
-    if (editing) footer.push(h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #F2D9D5;background:#FCF1EF;color:#D6483B;font-weight:600;font-size:13.5px;", hoverBg: "#FBEAE7", onClick: deleteAccount }, "Eliminar"));
+    if (editing) footer.push(h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #F2D9D5;background:#FCF1EF;color:#D6483B;font-weight:600;font-size:13.5px;", hoverBg: "#FBEAE7", onClick: deleteAccount }, "Archivar cuenta"));
     footer.push(saveBtn);
     var frame = modalFrame(editing ? "Editar cuenta" : "Nueva cuenta", closeAccountAdd, body, footer, 560);
     refresh();
