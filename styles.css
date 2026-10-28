@@ -98,7 +98,8 @@ body { padding-bottom: env(safe-area-inset-bottom); }
 
   /* The trades table keeps its layout but scrolls horizontally. */
   .trades-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .trades-scroll > * { min-width: 660px; }
+  /* 700px, no 660: el historial ganó la columna de selección múltiple. */
+  .trades-scroll > * { min-width: 700px; }
 
   /* Detail drawer and modals go full-width. */
   .dc-drawer { width: 100% !important; }
@@ -208,3 +209,34 @@ button[style*="background:#16181C"]:hover {
   filter: brightness(1.07);
 }
 button[style*="background:#16181C"]:active { transform: translateY(0); filter: brightness(1); }
+
+
+/* Bitácora responsive refinement: preserve usable content width on touch devices. */
+@media (max-width: 760px) {
+  html, body, #app { min-width: 0; max-width: 100%; overflow-x: clip; }
+  .side { flex: 0 0 52px !important; width: 52px !important; min-width: 52px !important; }
+  .side nav { gap: 5px !important; }
+  .side nav button { min-height: 44px !important; min-width: 40px !important; border-radius: 10px !important; }
+  .head { position: sticky; top: 0; z-index: 20; min-height: 56px; }
+  .head button, .head a { min-height: 40px; }
+  .dc-scroll { min-width: 0 !important; overflow-x: clip !important; padding: 12px !important; }
+  .trades-scroll { max-width: 100%; overscroll-behavior-x: contain; scrollbar-width: thin; }
+  .trades-scroll table, .trades-scroll > table { min-width: 680px; }
+  .trades-scroll th, .trades-scroll td { white-space: nowrap; }
+  .dc-modal { max-width: calc(100vw - 16px) !important; max-height: calc(100dvh - 16px) !important; overflow: auto !important; margin: 8px !important; border-radius: 16px !important; }
+  .dc-drawer { max-width: 100vw !important; max-height: 100dvh !important; overflow-y: auto !important; padding-bottom: max(16px, env(safe-area-inset-bottom)) !important; }
+  input, select, textarea { max-width: 100%; min-width: 0; }
+  button, [role="button"] { touch-action: manipulation; }
+  /* Long labels and inline content must wrap instead of widening the viewport. */
+  .dc-scroll :is(h1,h2,h3,p,label,small) { overflow-wrap: anywhere; }
+}
+@media (max-width: 420px) {
+  .side { flex-basis: 46px !important; width: 46px !important; min-width: 46px !important; padding-inline: 4px !important; }
+  .dc-scroll { padding: 10px !important; }
+  .head { padding-inline: 10px !important; }
+  .trades-scroll table, .trades-scroll > table { min-width: 620px; }
+}
+@media (min-width: 761px) and (max-width: 1024px) {
+  .dc-scroll { padding: 18px !important; }
+  .trades-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+}
