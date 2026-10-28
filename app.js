@@ -1373,7 +1373,17 @@
   async function saveAccount() {
     if (state.savingAccount) return;
     var d = state.accountDraft;
-    if (!d.name.trim()) return;
+    if (!d || !String(d.name || "").trim()) { window.alert("Escribe un nombre para la cuenta."); return; }
+    function optionalNonNegative(value, label) {
+      if (value === "" || value == null) return true;
+      var n = Number(value);
+      if (!Number.isFinite(n) || n < 0) {
+        window.alert(label + " debe ser un número igual o mayor que cero.");
+        return false;
+      }
+      return true;
+    }
+    if (!optionalNonNegative(d.profit_target, "El objetivo de beneficio") || !optionalNonNegative(d.max_drawdown, "El drawdown máximo")) return;
     if (!isOnline()) { window.alert("Necesitas conexión para crear o editar cuentas."); return; }
     state.savingAccount = true; renderModal();
     try {
@@ -1410,6 +1420,8 @@
       }
       saveCache();
       closeAccountAdd();
+    } catch (error) {
+      window.alert("No se pudo guardar la cuenta por un error de conexión o del servidor. Tus cambios siguen en el formulario; inténtalo de nuevo.");
     } finally {
       state.savingAccount = false;
       render();
@@ -1417,20 +1429,28 @@
   }
   async function deleteAccount() {
     var id = state.accountEditId;
-    if (!id) return;
+    if (!id || state.savingAccount) return;
+    var account = state.accounts.find(function (a) { return a.id === id; });
+    if (!account || account.status === "archivada") return;
     if (!isOnline()) { window.alert("Necesitas conexión para archivar cuentas."); return; }
     if (!window.confirm("¿Archivar esta cuenta? Se conservarán sus operaciones y todo su historial. Puedes seguir consultándola.")) return;
-    var account = state.accounts.find(function (a) { return a.id === id; });
-    if (!account) return;
-    var history = Array.isArray(account.account_history) ? account.account_history.slice() : [];
-    history.push({ date: todayISO(), type: "status_change", from: account.status, to: "archivada", note: "Cuenta archivada", created_at: new Date().toISOString() });
-    var res = await SB.from("accounts").update({ status: "archivada", account_history: history }).eq("id", id).select().single();
-    if (res.error) { window.alert("No se pudo archivar la cuenta: " + res.error.message); return; }
-    var updated = coerceAccount(res.data);
-    state.accounts = state.accounts.map(function (a) { return a.id === id ? updated : a; });
-    saveCache();
-    closeAccountAdd();
-    render();
+    state.savingAccount = true;
+    renderModal();
+    try {
+      var history = Array.isArray(account.account_history) ? account.account_history.slice() : [];
+      history.push({ date: todayISO(), type: "status_change", from: account.status, to: "archivada", note: "Cuenta archivada", created_at: new Date().toISOString() });
+      var res = await SB.from("accounts").update({ status: "archivada", account_history: history }).eq("id", id).select().single();
+      if (res.error) { window.alert("No se pudo archivar la cuenta: " + res.error.message); return; }
+      var updated = coerceAccount(res.data);
+      state.accounts = state.accounts.map(function (a) { return a.id === id ? updated : a; });
+      saveCache();
+      closeAccountAdd();
+    } catch (error) {
+      window.alert("No se pudo archivar la cuenta por un error de conexión o del servidor. No se confirmó ningún cambio; inténtalo de nuevo.");
+    } finally {
+      state.savingAccount = false;
+      render();
+    }
   }
   function openAccountAdd() { state.accountEditId = null; state.accountDraft = blankAccountDraft(); state.showAccountAdd = true; renderModal(); }
   function openAccountEdit(a) {
@@ -3706,7 +3726,7 @@
     var footer = [
       h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #E2DDD3;background:#fff;font-weight:600;font-size:13.5px;", hoverBg: "#FAF8F4", onClick: closeAccountAdd }, "Cancelar"),
     ];
-    if (editing) footer.push(h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #F2D9D5;background:#FCF1EF;color:#D6483B;font-weight:600;font-size:13.5px;", hoverBg: "#FBEAE7", onClick: deleteAccount }, "Archivar cuenta"));
+    if (editing && d.status !== "archivada") footer.push(h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #F2D9D5;background:#FCF1EF;color:#D6483B;font-weight:600;font-size:13.5px;", hoverBg: "#FBEAE7", onClick: deleteAccount }, "Archivar cuenta"));
     footer.push(saveBtn);
     var frame = modalFrame(editing ? "Editar cuenta" : "Nueva cuenta", closeAccountAdd, body, footer, 560);
     refresh();
