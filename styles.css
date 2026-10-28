@@ -366,9 +366,9 @@ select:focus-visible, textarea:focus-visible {
   .app-shell > :not(.side) { min-width: 0 !important; max-width: 100%; }
   .app-shell > .detail-drawer { position: fixed; }
   .head {
-    position: sticky;
-    top: 0;
-    z-index: 15;
+    position: relative;
+    top: auto;
+    z-index: auto;
     min-height: 52px !important;
     height: auto !important;
     flex-wrap: wrap;
