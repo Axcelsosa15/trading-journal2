@@ -240,3 +240,201 @@ button[style*="background:#16181C"]:active { transform: translateY(0); filter: b
   .dc-scroll { padding: 18px !important; }
   .trades-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
 }
+
+
+/* ==========================================================================
+   Bitácora UI refinement — responsive shell, navigation, density and touch.
+   Additive layer: keeps the existing app markup and all data logic intact.
+   ========================================================================== */
+
+:root {
+  --ui-bg: #f7f6f2;
+  --ui-surface: #fff;
+  --ui-border: #e7e4dc;
+  --ui-text: #202329;
+  --ui-muted: #777970;
+  --ui-accent: #16865a;
+  --ui-radius: 12px;
+}
+
+html, body { min-height: 100%; }
+body { background: var(--ui-bg); }
+button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button { touch-action: manipulation; }
+input, select, textarea { max-width: 100%; }
+#app { min-height: 100%; }
+.app-shell { min-width: 0; }
+.app-shell > * { min-width: 0; }
+.app-shell main, .app-shell .main-column, .app-shell .main { min-width: 0; }
+.dc-scroll { scrollbar-gutter: stable; }
+.dc-scroll > * { min-width: 0; }
+.side { z-index: 30; }
+.side nav button { min-height: 40px; }
+.side nav button svg { flex: 0 0 auto; }
+.side nav button span { min-width: 0; }
+.head { gap: 12px; }
+.head > div { min-width: 0; }
+.head button, .head select { max-width: 100%; }
+.trades-scroll { max-width: 100%; overscroll-behavior-x: contain; }
+.trades-scroll table { border-collapse: separate; border-spacing: 0; }
+.dc-modal, .dc-drawer { box-sizing: border-box; }
+.dc-modal input, .dc-modal select, .dc-modal textarea,
+.dc-drawer input, .dc-drawer select, .dc-drawer textarea {
+  min-width: 0;
+}
+button:focus-visible, a:focus-visible, input:focus-visible,
+select:focus-visible, textarea:focus-visible {
+  outline: 2px solid #3986cf;
+  outline-offset: 2px;
+}
+@media (hover: hover) {
+  .side nav button:hover { filter: brightness(.98); }
+  .trades-scroll tr:hover td { background-color: rgba(22, 134, 90, .035); }
+}
+@media (max-width: 760px) {
+  html, body { width: 100%; min-width: 0; }
+  body { background: #f7f6f2; }
+  .app-shell {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 100dvh;
+    overflow: visible !important;
+  }
+
+  /* Navigation becomes a readable, swipeable strip instead of 52px icon rail. */
+  .app-shell > .side {
+    order: 0;
+    position: sticky;
+    top: 0;
+    width: 100% !important;
+    min-width: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    flex: 0 0 auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 6px;
+    padding: 8px 10px 7px !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid #e7e4dc;
+    background: rgba(255,255,255,.97) !important;
+    box-shadow: 0 4px 18px rgba(22,24,28,.06);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+  .side > div:first-child {
+    padding: 2px 4px 5px !important;
+    gap: 8px !important;
+  }
+  .side .brand-logo { width: 27px !important; height: 27px !important; }
+  .side .side-text > div:first-child { font-size: 14px !important; }
+  .side .side-text > div:last-child { font-size: 9px !important; }
+  .side nav {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: stretch;
+    gap: 5px !important;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 2px 1px 4px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .side nav::-webkit-scrollbar { display: none; }
+  .side nav button {
+    flex: 0 0 auto;
+    width: auto !important;
+    min-width: max-content !important;
+    min-height: 40px !important;
+    justify-content: flex-start !important;
+    gap: 7px !important;
+    padding: 8px 11px !important;
+    border-radius: 10px !important;
+    font-size: 12px !important;
+    white-space: nowrap;
+  }
+  .side nav button svg { width: 16px; height: 16px; }
+  .side nav button span { display: inline !important; }
+  .side nav button span:last-child:not(:first-child) { margin-left: 2px; }
+  .side .side-foot { display: none !important; }
+
+  .app-shell > :not(.side) { min-width: 0 !important; max-width: 100%; }
+  .app-shell > .detail-drawer { position: fixed; }
+  .head {
+    position: sticky;
+    top: 0;
+    z-index: 15;
+    min-height: 52px !important;
+    height: auto !important;
+    flex-wrap: wrap;
+    padding: 10px 14px !important;
+    gap: 8px !important;
+    background: rgba(250,248,244,.96) !important;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .head > div:first-child { flex: 1 1 auto; }
+  .head > div:first-child > div { font-size: 15px !important; }
+  .head > div:last-child { max-width: 100%; flex-wrap: wrap; gap: 7px !important; }
+  .head button, .head select { min-height: 40px; }
+  .dc-scroll {
+    min-width: 0 !important;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: clip !important;
+    padding: 14px 12px calc(24px + env(safe-area-inset-bottom)) !important;
+  }
+  .dc-scroll h1, .dc-scroll h2, .dc-scroll h3 { overflow-wrap: anywhere; }
+  .dc-scroll [style*="grid-template-columns"] { min-width: 0; }
+  .dc-scroll > div, .dc-scroll section, .dc-scroll article { min-width: 0; max-width: 100%; }
+  .trades-scroll {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    border-radius: 10px;
+  }
+  .trades-scroll table, .trades-scroll > table { min-width: 680px !important; }
+  .trades-scroll th, .trades-scroll td { white-space: nowrap; }
+  .dc-modal {
+    width: calc(100vw - 20px) !important;
+    max-width: calc(100vw - 20px) !important;
+    max-height: calc(100dvh - 20px) !important;
+    margin: 10px !important;
+    padding: 18px !important;
+    overflow: auto !important;
+    overscroll-behavior: contain;
+    border-radius: 15px !important;
+  }
+  .dc-drawer {
+    width: min(100vw, 520px) !important;
+    max-width: 100vw !important;
+    max-height: 100dvh !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+  }
+  input, select, textarea { font-size: 16px !important; }
+  button { min-height: 36px; }
+  .rp-research-panel { padding: 14px !important; margin: 14px 0 !important; }
+  .rp-kpi-grid { gap: 8px !important; }
+  .rp-kpi { padding: 11px !important; }
+  .rp-kpi-value { font-size: clamp(17px, 5vw, 22px) !important; overflow-wrap: anywhere; }
+}
+@media (max-width: 380px) {
+  .side nav button { padding: 8px 9px !important; font-size: 11.5px !important; }
+  .dc-scroll { padding-left: 9px !important; padding-right: 9px !important; }
+  .rp-kpi-grid { grid-template-columns: 1fr 1fr !important; }
+}
+@media (min-width: 761px) {
+  .app-shell { height: 100dvh !important; }
+  .dc-scroll { overscroll-behavior: contain; }
+  .side { overflow-y: auto; scrollbar-width: thin; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
