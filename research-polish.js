@@ -218,24 +218,28 @@
   }
   var lastPanelHtml = "";
   function mountResearchPanel() {
+    // Mount only on the dedicated Research quality view. Read the actual page title,
+    // not all main text, so this cannot match content from another view.
     var main = document.querySelector("main");
-    if (!main || !/Resumen/.test(textOf(main))) return;
+    var titleWrap = main && main.querySelector("header > div");
+    var title = titleWrap && titleWrap.firstElementChild;
+    if (!main || !title || textOf(title) !== "Research quality") return;
+    var container = main.querySelector(".dc-scroll");
+    if (!container) return;
     var html = researchPanelHtml();
-    var existing = main.querySelector('[data-rp-panel="research"]');
+    var existing = container.querySelector('[data-rp-panel="research"]');
     if (existing) {
       // Only rewrite when the content actually changed — otherwise the app's
       // frequent re-renders would make the panel flicker on every tick.
       if (html !== lastPanelHtml) { existing.outerHTML = html; lastPanelHtml = html; }
-      else return; // unchanged and already mounted: nothing to do (no flicker)
+      else return;
     } else {
-      var anchor = Array.prototype.find.call(main.children, function (el) {
-        return /P&L neto|Win rate|Profit factor|Esperanza/.test(textOf(el));
-      });
-      if (anchor) anchor.insertAdjacentHTML("beforebegin", html);
-      else main.insertAdjacentHTML("beforeend", html);
+      // Put the research dashboard first in this tab, including when the native
+      // insights view is still in its empty-state.
+      container.insertAdjacentHTML("afterbegin", html);
       lastPanelHtml = html;
     }
-    var btn = main.querySelector("[data-rp-export]");
+    var btn = container.querySelector("[data-rp-export]");
     if (btn && !btn.__rpBound) {
       btn.__rpBound = true;
       btn.addEventListener("click", exportResearchCsv);
