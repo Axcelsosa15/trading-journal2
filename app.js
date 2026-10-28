@@ -458,16 +458,13 @@
 
   // ---------- MFA (TOTP 2FA) ----------
   function hasMfaApi() { return SB.auth && SB.auth.mfa; }
-  // Decide whether to block the app behind a 2FA challenge after password login.
+  // Keep the app accessible after email/password login. A previously enrolled
+  // TOTP factor must not trap the user behind a challenge they cannot complete.
+  // The user can still manage/remove enrolled factors from Settings when signed in.
   async function checkMfaGate() {
-    state.mfaChecked = false;
-    if (!hasMfaApi()) { state.mfaGate = false; state.mfaChecked = true; render(); return; }
-    try {
-      var r = await SB.auth.mfa.getAuthenticatorAssuranceLevel();
-      var d = r && r.data;
-      state.mfaGate = !!(d && d.currentLevel === "aal1" && d.nextLevel === "aal2");
-    } catch (e) { state.mfaGate = false; }
+    state.mfaGate = false;
     state.mfaChecked = true;
+    state.mfa = { code: "", busy: false, error: "" };
     render();
   }
   async function submitMfaChallenge() {
