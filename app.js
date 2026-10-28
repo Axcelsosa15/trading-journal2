@@ -2124,6 +2124,10 @@
     var map = { activa: "#E8F3EC;color:#16915B", evaluacion: "#EAF0F7;color:#3D6FB0", fondeada: "#E8F3EC;color:#16915B", payout_pedido: "#FBF1E6;color:#C77B2A", payout_aprobado: "#E8F3EC;color:#16915B", aprobada: "#E8F3EC;color:#16915B", quemada: "#FBEAE7;color:#D6483B", pausada: "#FBF1E6;color:#C77B2A", cerrada: "#F1EDE5;color:#54514A", archivada: "#F1EDE5;color:#807B72" };
     return "display:inline-flex;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:" + (map[status] || "#F1EDE5;color:#54514A");
   }
+  function statusLabel(status) {
+    var labels = { activa: "Activa", evaluacion: "Evaluación", fondeada: "Fondeada", payout_pedido: "Payout pedido", payout_aprobado: "Payout aprobado", aprobada: "Aprobada", quemada: "Quemada", pausada: "En pausa", cerrada: "Cerrada", archivada: "Archivada" };
+    return labels[status] || String(status || "Sin estado");
+  }
   function accountsView() {
     var burnedCount = state.accounts.filter(function (a) { return a.status === "quemada"; }).length;
     var activeCount = state.accounts.filter(function (a) { return ["activa", "evaluacion", "fondeada", "payout_pedido"].indexOf(a.status) >= 0; }).length;
@@ -2175,7 +2179,7 @@
             a.firm ? h("div", { style: "font-size:12px;color:#A39E94;margin-top:2px;" }, a.firm) : null),
           h("div", { style: "display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex:none;" },
             h("span", { style: kindStyle(a.kind) }, KIND_LABEL[a.kind] || a.kind),
-            h("span", { style: statusStyle(a.status) }, a.status.charAt(0).toUpperCase() + a.status.slice(1)))),
+            h("span", { style: statusStyle(a.status) }, statusLabel(a.status)))),
         h("div", { style: "border-top:1px solid #F3EFE7;margin-top:4px;padding-top:8px;" }, rows),
         historyPanel,
         h("div", { style: "display:flex;gap:8px;margin-top:14px;" }, viewBtn, editBtn));
