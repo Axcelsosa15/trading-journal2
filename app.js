@@ -2199,6 +2199,56 @@
       state.savingAccount = false; render();
     }
   }
+  // Automatic trading-window clock. It refreshes every second while Bitácora is open.
+  // The schedule is recurring Monday-Friday, 8:30-11:00 AM America/New_York.
+  function updateAccountsScheduleClock() {
+    var clock = document.getElementById("accounts-schedule-clock");
+    var status = document.getElementById("accounts-schedule-status");
+    var detail = document.getElementById("accounts-schedule-detail");
+    var progress = document.getElementById("accounts-schedule-progress");
+    if (!clock || !status || !detail || !progress) return;
+    try {
+      var now = new Date();
+      var parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York", weekday: "short", hour: "2-digit",
+        minute: "2-digit", second: "2-digit", hourCycle: "h23"
+      }).formatToParts(now).reduce(function (out, part) { out[part.type] = part.value; return out; }, {});
+      var weekday = ["Mon", "Tue", "Wed", "Thu", "Fri"].indexOf(parts.weekday) >= 0;
+      var minute = Number(parts.hour) * 60 + Number(parts.minute);
+      var open = weekday && minute >= 510 && minute < 660;
+      clock.textContent = parts.hour + ":" + parts.minute + ":" + parts.second + " ET";
+      status.textContent = open ? "VENTANA ACTIVA" : "EN ESPERA · AUTOMÁTICO";
+      status.style.background = open ? "#E8F3EC" : "#F1EDE5";
+      status.style.color = open ? "#16865A" : "#6F6B63";
+      detail.textContent = open
+        ? "Ventana activa ahora. Cierra a las 11:00 AM ET."
+        : "Se repite de lunes a viernes, 8:30–11:00 AM ET. No necesitas activarla manualmente.";
+      progress.style.width = Math.max(0, Math.min(100, ((minute - 510) / 150) * 100)) + "%";
+      progress.style.opacity = open ? "1" : ".25";
+    } catch (e) {
+      clock.textContent = "Horario ET";
+      status.textContent = "HORARIO PROGRAMADO";
+      detail.textContent = "Lunes a viernes · 8:30–11:00 AM ET.";
+    }
+  }
+  function accountsScheduleView() {
+    if (!window.__bitacoraAccountsScheduleTimer) {
+      window.__bitacoraAccountsScheduleTimer = window.setInterval(updateAccountsScheduleClock, 1000);
+    }
+    var schedule = h("section", { class: "accounts-schedule", style: "background:#fff;border:1px solid #E7E4DC;border-radius:14px;padding:15px 16px;display:flex;flex-direction:column;gap:11px;" },
+      h("div", { style: "display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;" },
+        h("div", null,
+          h("div", { style: "font-size:10px;font-weight:750;letter-spacing:1.1px;color:#807B72;text-transform:uppercase;" }, "Horario automático · Nueva York"),
+          h("div", { id: "accounts-schedule-clock", style: "font-family:'Geist Mono',monospace;font-size:25px;font-weight:750;letter-spacing:-.6px;margin-top:5px;" }, "—:—:— ET"),
+          h("div", { id: "accounts-schedule-detail", style: "font-size:12px;color:#807B72;margin-top:4px;" }, "Lunes a viernes · 8:30–11:00 AM ET.")),
+        h("span", { id: "accounts-schedule-status", style: "display:inline-flex;align-items:center;border-radius:999px;padding:7px 10px;font-size:10px;font-weight:750;letter-spacing:.45px;background:#F1EDE5;color:#6F6B63;" }, "EN ESPERA · AUTOMÁTICO")),
+      h("div", { style: "height:5px;background:#F1EDE5;border-radius:999px;overflow:hidden;" },
+        h("div", { id: "accounts-schedule-progress", style: "height:100%;width:0%;background:#16865A;border-radius:999px;transition:width .5s linear;" })),
+      h("div", { style: "font-size:10.5px;color:#A39E94;line-height:1.45;" }, "El reloj y el estado se actualizan solos mientras Bitácora esté abierto. No ejecuta operaciones ni envía órdenes al mercado."));
+    window.setTimeout(updateAccountsScheduleClock, 0);
+    return schedule;
+  }
+
   function accountsView() {
     var all = state.accounts.slice();
     var burned = all.filter(function (account) { return account.status === "quemada"; });
@@ -2320,6 +2370,7 @@
     }
     return h("div", { class: "accounts-lifecycle", style: "max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:16px;" },
       heading,
+      accountsScheduleView(),
       h("div", { style: "display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;" },
         h("div", { style: "font-size:12px;color:#807B72;" }, all.length + " cuentas · " + burned.length + " quemadas · " + live.length + " vivas"),
         filters),
