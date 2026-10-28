@@ -3786,9 +3786,13 @@
       state.settings.strategyLab = Array.isArray(strategies) ? strategies.slice() : [];
       saveCache();
       if (!state.user || !isOnline()) return { ok: false, reason: "offline" };
-      var result = await SB.from("user_settings").upsert({ user_id: state.user.id, data: state.settings, updated_at: new Date().toISOString() }, { onConflict: "user_id" }).select().single();
-      if (result.error) return { ok: false, reason: result.error.message };
-      applySettings(result.data && result.data.data ? result.data.data : state.settings); saveCache(); return { ok: true };
+      try {
+        var result = await SB.from("user_settings").upsert({ user_id: state.user.id, data: state.settings, updated_at: new Date().toISOString() }, { onConflict: "user_id" }).select().single();
+        if (result.error) return { ok: false, reason: result.error.message };
+        applySettings(result.data && result.data.data ? result.data.data : state.settings); saveCache(); return { ok: true };
+      } catch (error) {
+        return { ok: false, reason: error && error.message ? error.message : "sync_failed" };
+      };
     }
   };
   initTheme();
