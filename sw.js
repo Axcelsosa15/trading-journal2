@@ -13,7 +13,7 @@
  * takes over on the next load instead of waiting behind the old one. Bump CACHE
  * to purge old asset versions.
  */
-var CACHE = "bitacora-v7";
+var CACHE = "bitacora-v8";
 var SHELL = [
   "./",
   "./index.html",

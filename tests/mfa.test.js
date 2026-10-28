@@ -25,14 +25,13 @@ const mfaA={
 const A=base(mfaA);
 await new Promise(r=>setTimeout(r,150));
 let txt=A.d.getElementById("app").textContent;
-console.log("[A] Gate shown:", /Verificación en dos pasos/.test(txt));
-const codeInput=A.d.querySelector("#app input");
-console.log("[A] Code input present:", !!codeInput);
-codeInput.value="123456"; codeInput.dispatchEvent(new A.window.Event("input",{bubbles:true}));
-click(A.window,[...A.d.querySelectorAll("#app button")].find(b=>/Verificar/.test(b.textContent)));
-await new Promise(r=>setTimeout(r,120));
-const after=A.d.getElementById("app").textContent;
-console.log("[A] Gate cleared → app shown:", !/Verificación en dos pasos/.test(after) && /Resumen|Operaciones/.test(after));
+// Login is deliberately NOT gated on an enrolled TOTP factor: the challenge
+// screen locked users out of their own journal (see "Fix login lockout from
+// MFA challenge", #119). An enrolled factor is managed from Ajustes instead,
+// which scenario B below covers. If the gate is ever brought back, it needs a
+// recovery path first — and this assertion has to be flipped on purpose.
+console.log("[A] Enrolled factor does not gate login:", !/Verificación en dos pasos/.test(txt));
+console.log("[A] App shown after password login:", /Resumen|Operaciones/.test(txt));
 
 // Scenario B: enrollment
 let factorsB=[];
