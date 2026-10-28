@@ -1038,7 +1038,7 @@
       // Accounts before trades: trades.account_id is a foreign key into accounts.
       if (accounts.length) {
         var accRows = accounts.map(function (a) {
-          return { id: a.id, name: a.name, kind: a.kind, firm: a.firm || null, balance: Number(a.balance) || 0, currency: a.currency || "USD", phase: a.phase || null, status: a.status || "activa", profit_target: a.profit_target === "" || a.profit_target == null ? null : Number(a.profit_target), max_drawdown: a.max_drawdown === "" || a.max_drawdown == null ? null : Number(a.max_drawdown), notes: a.notes || "" };
+          return { id: a.id, name: a.name, kind: a.kind, firm: a.firm || null, balance: Number(a.balance) || 0, currency: a.currency || "USD", phase: a.phase || null, status: a.status || "activa", profit_target: a.profit_target === "" || a.profit_target == null ? null : Number(a.profit_target), max_drawdown: a.max_drawdown === "" || a.max_drawdown == null ? null : Number(a.max_drawdown), notes: a.notes || "", account_history: Array.isArray(a.account_history) ? a.account_history : [] };
         });
         var ar = await SB.from("accounts").upsert(accRows, { onConflict: "id" }).select();
         if (ar.error) throw ar.error;
@@ -1417,15 +1417,16 @@
   async function deleteAccount() {
     var id = state.accountEditId;
     if (!id) return;
-    if (!isOnline()) { window.alert("Necesitas conexión para eliminar cuentas."); return; }
-    if (!window.confirm("¿Eliminar esta cuenta? Las operaciones asociadas se conservarán pero quedarán sin cuenta.")) return;
-    var res = await SB.from("accounts").delete().eq("id", id);
-    if (res.error) { window.alert("No se pudo eliminar: " + res.error.message); return; }
-    state.accounts = state.accounts.filter(function (a) { return a.id !== id; });
-    state.trades = state.trades.map(function (t) { return t.account_id === id ? Object.assign({}, t, { account_id: null }) : t; });
-    // If we were scoped to the deleted account, fall back to the whole app.
-    if (state.scopeAccount === id) setScopeAccount("all");
-    if (state.fAccount === id) state.fAccount = "all";
+    if (!isOnline()) { window.alert("Necesitas conexión para archivar cuentas."); return; }
+    if (!window.confirm("¿Archivar esta cuenta? Se conservarán sus operaciones y todo su historial. Puedes seguir consultándola.")) return;
+    var account = state.accounts.find(function (a) { return a.id === id; });
+    if (!account) return;
+    var history = Array.isArray(account.account_history) ? account.account_history.slice() : [];
+    history.push({ date: todayISO(), type: "status_change", from: account.status, to: "archivada", note: "Cuenta archivada", created_at: new Date().toISOString() });
+    var res = await SB.from("accounts").update({ status: "archivada", account_history: history }).eq("id", id).select().single();
+    if (res.error) { window.alert("No se pudo archivar la cuenta: " + res.error.message); return; }
+    var updated = coerceAccount(res.data);
+    state.accounts = state.accounts.map(function (a) { return a.id === id ? updated : a; });
     saveCache();
     closeAccountAdd();
     render();
@@ -3700,7 +3701,7 @@
     var footer = [
       h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #E2DDD3;background:#fff;font-weight:600;font-size:13.5px;", hoverBg: "#FAF8F4", onClick: closeAccountAdd }, "Cancelar"),
     ];
-    if (editing) footer.push(h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #F2D9D5;background:#FCF1EF;color:#D6483B;font-weight:600;font-size:13.5px;", hoverBg: "#FBEAE7", onClick: deleteAccount }, "Eliminar"));
+    if (editing) footer.push(h("button", { style: "flex:1;padding:11px;border-radius:10px;border:1px solid #F2D9D5;background:#FCF1EF;color:#D6483B;font-weight:600;font-size:13.5px;", hoverBg: "#FBEAE7", onClick: deleteAccount }, "Archivar cuenta"));
     footer.push(saveBtn);
     var frame = modalFrame(editing ? "Editar cuenta" : "Nueva cuenta", closeAccountAdd, body, footer, 560);
     refresh();
