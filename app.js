@@ -2217,7 +2217,12 @@
       state.accounts = state.accounts.map(function (item) { return item.id === updated.id ? updated : item; });
       saveCache();
     } catch (error) {
-      window.alert("No se pudo guardar el movimiento. No se confirmó el cambio; inténtalo de nuevo.");
+      var message = String(error && error.message || "");
+      if (/account_history/i.test(message) && /column|schema cache|does not exist|could not find/i.test(message)) {
+        window.alert("La cuenta existe, pero falta aplicar la migración de Supabase para account_history. Ejecuta supabase/migrations/20261028070000_add_accounts_account_history.sql en el SQL Editor del proyecto y vuelve a intentarlo.");
+      } else {
+        window.alert("No se pudo guardar el movimiento. No se confirmó el cambio; inténtalo de nuevo.");
+      }
     } finally {
       state.savingAccount = false; render();
     }
