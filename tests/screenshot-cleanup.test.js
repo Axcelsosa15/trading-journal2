@@ -18,6 +18,9 @@ function makeFrom(tbl){let op="select",payload=null,single=false;const b={};
    return Promise.resolve({data,error:null}).then(res,rej);};
  return b;}
 let session={user:{email:"t@t.com",id:"u1"}};
+// Eliminar una operación ahora pide confirmación: jsdom no implementa confirm()
+// (devuelve undefined, que aborta el borrado), así que respondemos "Aceptar".
+window.confirm=()=>true;
 window.supabase={createClient:()=>({auth:{onAuthStateChange:cb=>({data:{subscription:{unsubscribe(){}}}}),getSession:()=>Promise.resolve({data:{session}}),signOut:async()=>({error:null})},from:makeFrom,storage})};
 vm.runInContext(fs.readFileSync("app.js","utf8"),dom.getInternalVMContext(),{filename:"app.js"});
 const click=el=>el.dispatchEvent(new window.MouseEvent("click",{bubbles:true}));
