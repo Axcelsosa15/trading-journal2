@@ -2177,11 +2177,11 @@
     var label = type === "cost" ? "Costo pagado (evaluación, reset u otra tarifa)" : "Retiro cobrado";
     var rawAmount = window.prompt(label + " en USD. Usa un importe positivo:");
     if (rawAmount == null) return;
-    var amount = Number(String(rawAmount).replace(/[$,\\s]/g, ""));
+    var amount = Number(String(rawAmount).replace(/[$,\s]/g, ""));
     if (!Number.isFinite(amount) || amount <= 0) { window.alert("Introduce un importe mayor que cero."); return; }
     var date = window.prompt("Fecha del movimiento (AAAA-MM-DD):", todayISO());
     if (date == null) return;
-    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || isNaN(Date.parse(date + "T12:00:00"))) { window.alert("La fecha debe usar el formato AAAA-MM-DD."); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(Date.parse(date + "T12:00:00"))) { window.alert("La fecha debe usar el formato AAAA-MM-DD."); return; }
     var note = window.prompt("Nota opcional (evaluación, reset, payout, referencia):", "") || "";
     if (!isOnline()) { window.alert("Conéctate a internet para guardar el movimiento."); return; }
     state.savingAccount = true; render();
