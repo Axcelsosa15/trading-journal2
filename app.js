@@ -144,7 +144,8 @@
         maxWeeklyLoss: r.maxWeeklyLoss == null ? "" : r.maxWeeklyLoss,
       },
       checklist: Array.isArray(data.checklist) && data.checklist.length ? data.checklist : DEFAULT_CHECKLIST.slice(),
-      onboardingDone: !!data.onboardingDone,\n      strategyLab: Array.isArray(data.strategyLab) ? data.strategyLab : [],
+      onboardingDone: !!data.onboardingDone,
+      strategyLab: Array.isArray(data.strategyLab) ? data.strategyLab : [],
     };
   }
   var state = {
