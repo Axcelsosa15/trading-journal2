@@ -189,4 +189,7 @@ alter table public.accounts
   add constraint accounts_status_valid
   check (status in ('activa', 'evaluacion', 'fondeada', 'payout_pedido', 'payout_aprobado', 'aprobada', 'quemada', 'pausada', 'cerrada', 'archivada')) not valid;
 
+-- Make the new columns visible to the API without waiting for a cache refresh.
+notify pgrst, 'reload schema';
+
 commit;

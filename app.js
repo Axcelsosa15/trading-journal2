@@ -178,6 +178,7 @@
     mfaGate: false, mfaChecked: false, mfa: { code: "", busy: false, error: "" },
     showMfa: false, mfaFactors: [], mfaFactorsLoaded: false,
     mfaEnroll: { id: null, qr: "", secret: "", code: "", busy: false, error: "" },
+    historyNoticeShown: false,
   };
 
   // ---------- helpers ----------
@@ -266,7 +267,11 @@
     return String(str || "").split(",").map(function (s) { return s.trim(); }).filter(function (s, i, a) { return s && a.indexOf(s) === i; });
   }
   function coerceAccount(r) {
-    return { id: r.id, name: r.name, kind: r.kind, firm: r.firm || "", balance: Number(r.balance), currency: r.currency || "USD", phase: r.phase || "", status: r.status, profit_target: r.profit_target == null ? "" : Number(r.profit_target), max_drawdown: r.max_drawdown == null ? "" : Number(r.max_drawdown), notes: r.notes || "", account_history: Array.isArray(r.account_history) ? r.account_history : [] };
+    // A row from a legacy schema has no account_history at all, so fall back to
+    // whatever this device is holding for it; when the column does exist, the
+    // server rows win and any still-unsynced local events ride alongside.
+    var serverHistory = Array.isArray(r.account_history) ? r.account_history : null;
+    return { id: r.id, name: r.name, kind: r.kind, firm: r.firm || "", balance: Number(r.balance), currency: r.currency || "USD", phase: r.phase || "", status: r.status, profit_target: r.profit_target == null ? "" : Number(r.profit_target), max_drawdown: r.max_drawdown == null ? "" : Number(r.max_drawdown), notes: r.notes || "", account_history: mergeHistory(serverHistory, localHistoryFor(r.id)) };
   }
   function coerceJournal(r) {
     return { id: r.id, date: r.date, mood: r.mood, title: r.title, body: r.body || "", lesson: r.lesson || "" };
@@ -277,6 +282,93 @@
   function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } }
   function cacheKey() { return "bitacora_cache_" + (state.user ? state.user.id : "anon"); }
   function outboxKey() { return "bitacora_outbox_" + (state.user ? state.user.id : "anon"); }
+
+  // ---------- account history on a not-yet-migrated schema ----------
+  // Older installations run an accounts table without the account_history jsonb
+  // column, so the account itself saves but its history and movements cannot.
+  // Rather than drop the event, keep it on this device and push it up on its
+  // own once the column exists. Every event carries an id so that later sync
+  // merges instead of duplicating.
+  function accountHistoryKey() { return "bitacora_acct_history_" + (state.user ? state.user.id : "anon"); }
+  function getLocalHistoryMap() { var m = lsGet(accountHistoryKey()); return m && typeof m === "object" ? m : {}; }
+  function localHistoryFor(id) { var events = getLocalHistoryMap()[id]; return Array.isArray(events) ? events : []; }
+  function setLocalHistoryFor(id, events) {
+    var map = getLocalHistoryMap();
+    if (events && events.length) map[id] = events; else delete map[id];
+    lsSet(accountHistoryKey(), map);
+  }
+  function missingAccountHistoryColumn(error) {
+    var message = String(error && error.message || "");
+    return /account_history/i.test(message) && /column|schema cache|does not exist|could not find/i.test(message);
+  }
+  function historyEventId(event) {
+    if (event && event.id) return String(event.id);
+    return [event && event.date, event && event.type, event && event.amount, event && event.from, event && event.to, event && event.note, event && event.created_at].join("|");
+  }
+  function stampHistoryEvent(event) {
+    if (event && !event.id) event.id = "ev_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+    return event;
+  }
+  function mergeHistory(serverEvents, localEvents) {
+    var out = Array.isArray(serverEvents) ? serverEvents.slice() : [];
+    var seen = {};
+    out.forEach(function (event) { seen[historyEventId(event)] = true; });
+    (localEvents || []).forEach(function (event) {
+      var key = historyEventId(event);
+      if (!seen[key]) { seen[key] = true; out.push(event); }
+    });
+    return out.sort(function (a, b) {
+      return String(a && a.date || "").localeCompare(String(b && b.date || "")) ||
+        String(a && a.created_at || "").localeCompare(String(b && b.created_at || ""));
+    });
+  }
+  // Said once per session on purpose: an alert on every save is what made this
+  // unusable to begin with.
+  function noteHistoryKeptOnDevice() {
+    if (state.historyNoticeShown) return;
+    state.historyNoticeShown = true;
+    window.alert("Tu base de datos todavía no tiene la columna account_history, así que el historial y los movimientos se están guardando en este dispositivo; la cuenta se guarda con normalidad. Bitácora los sube sola en cuanto ejecutes supabase/schema.sql en el SQL Editor de Supabase. Hasta entonces no se ven en tus otros dispositivos.");
+  }
+  // Writes history, plus any other column changes, tolerating the missing
+  // column. row is the server row when the server had something to update,
+  // null when the whole update was history and the column is absent.
+  async function writeAccountHistory(accountId, history, extraFields) {
+    var extra = extraFields || {};
+    var payload = Object.assign({}, extra, { account_history: history });
+    var res = await SB.from("accounts").update(payload).eq("id", accountId).select().single();
+    if (res.error && missingAccountHistoryColumn(res.error)) {
+      var legacy = Object.keys(extra).length
+        ? await SB.from("accounts").update(extra).eq("id", accountId).select().single()
+        : { data: null, error: null };
+      if (legacy.error) return { row: null, localOnly: false, error: legacy.error };
+      setLocalHistoryFor(accountId, history);
+      noteHistoryKeptOnDevice();
+      return { row: legacy.data, localOnly: true, error: null };
+    }
+    if (res.error) return { row: null, localOnly: false, error: res.error };
+    setLocalHistoryFor(accountId, []);
+    return { row: res.data, localOnly: false, error: null };
+  }
+  // Once the column exists, hand over whatever this device was holding.
+  async function flushAccountHistory() {
+    if (!isOnline() || !state.user) return;
+    var ids = Object.keys(getLocalHistoryMap());
+    if (!ids.length) return;
+    var synced = 0;
+    for (var i = 0; i < ids.length; i++) {
+      var id = ids[i];
+      var account = state.accounts.filter(function (a) { return a.id === id; })[0];
+      if (!account) continue;
+      var res = await SB.from("accounts").update({ account_history: account.account_history }).eq("id", id).select().single();
+      // Still not migrated, or the write failed: keep the local copy and stop.
+      if (res.error) return;
+      setLocalHistoryFor(id, []);
+      var updated = coerceAccount(res.data);
+      state.accounts = state.accounts.map(function (a) { return a.id === updated.id ? updated : a; });
+      synced++;
+    }
+    if (synced) saveCache();
+  }
   function saveCache() {
     if (!state.user) return;
     lsSet(cacheKey(), { trades: state.trades, journal: state.journal, accounts: state.accounts, settings: state.settings, ts: Date.now() });
@@ -351,6 +443,7 @@
       restoreScopeAccount();
       state.usingCache = false;
       saveCache();
+      await flushAccountHistory();
       await flushOutbox();
     } catch (e) {
       // Offline or transient failure: fall back to the last cached snapshot.
@@ -1042,6 +1135,19 @@
           return { id: a.id, name: a.name, kind: a.kind, firm: a.firm || null, balance: Number(a.balance) || 0, currency: a.currency || "USD", phase: a.phase || null, status: a.status || "activa", profit_target: a.profit_target === "" || a.profit_target == null ? null : Number(a.profit_target), max_drawdown: a.max_drawdown === "" || a.max_drawdown == null ? null : Number(a.max_drawdown), notes: a.notes || "", account_history: Array.isArray(a.account_history) ? a.account_history : [] };
         });
         var ar = await SB.from("accounts").upsert(accRows, { onConflict: "id" }).select();
+        if (ar.error && missingAccountHistoryColumn(ar.error)) {
+          // Legacy schema: restore the accounts without the column and keep each
+          // history on this device instead of failing the whole restore.
+          ar = await SB.from("accounts").upsert(accRows.map(function (row) {
+            var legacy = Object.assign({}, row);
+            delete legacy.account_history;
+            return legacy;
+          }), { onConflict: "id" }).select();
+          if (!ar.error) {
+            accRows.forEach(function (row) { setLocalHistoryFor(row.id, row.account_history); });
+            noteHistoryKeptOnDevice();
+          }
+        }
         if (ar.error) throw ar.error;
       }
       if (trades.length) {
@@ -1392,14 +1498,14 @@
       var statusChanged = !!existingAccount && existingAccount.status !== d.status;
       var eventNote = String(d.event_note || "").trim();
       if (!existingAccount || statusChanged || eventNote) {
-        history.push({
+        history.push(stampHistoryEvent({
           date: d.event_date || todayISO(),
           type: !existingAccount ? "created" : (statusChanged ? "status_change" : "note"),
           from: existingAccount ? existingAccount.status : "",
           to: d.status,
           note: eventNote || (!existingAccount ? "Cuenta creada" : (statusChanged ? "Estado cambiado de " + existingAccount.status + " a " + d.status : "Evento registrado")),
           created_at: new Date().toISOString()
-        });
+        }));
       }
       var row = {
         name: d.name.trim(), kind: d.kind, firm: d.firm || null, balance: Number(d.balance) || 0, currency: d.currency || "USD",
@@ -1408,26 +1514,24 @@
         max_drawdown: d.max_drawdown === "" ? null : Number(d.max_drawdown), notes: d.notes,
         account_history: history
       };
-      function missingAccountHistoryColumn(error) {
-        var message = String(error && error.message || "");
-        return /account_history/i.test(message) && /column|schema cache|does not exist|could not find/i.test(message);
-      }
       async function persistAccount(payload) {
         var result = state.accountEditId
           ? await SB.from("accounts").update(payload).eq("id", state.accountEditId).select().single()
           : await SB.from("accounts").insert(payload).select().single();
         if (result.error && missingAccountHistoryColumn(result.error) && Object.prototype.hasOwnProperty.call(payload, "account_history")) {
-          // Keep account creation/editing usable against older Supabase schemas.
-          // The SQL migration adds history support; do not silently claim it was saved.
+          // Older Supabase schema: save the account without the column and keep
+          // its history on this device, so nothing the user typed is lost.
           var legacyPayload = Object.assign({}, payload);
           delete legacyPayload.account_history;
           result = state.accountEditId
             ? await SB.from("accounts").update(legacyPayload).eq("id", state.accountEditId).select().single()
             : await SB.from("accounts").insert(legacyPayload).select().single();
-          if (!result.error) {
-            var migrationNotice = "La cuenta se guardó, pero tu base de datos aún no tiene la columna account_history. El historial y los movimientos no se guardarán hasta aplicar supabase/migrations/20261028070000_add_accounts_account_history.sql en Supabase.";
-            window.alert(migrationNotice);
+          if (!result.error && result.data) {
+            setLocalHistoryFor(result.data.id, payload.account_history);
+            noteHistoryKeptOnDevice();
           }
+        } else if (!result.error && result.data) {
+          setLocalHistoryFor(result.data.id, []);
         }
         return result;
       }
@@ -1461,10 +1565,10 @@
     renderModal();
     try {
       var history = Array.isArray(account.account_history) ? account.account_history.slice() : [];
-      history.push({ date: todayISO(), type: "status_change", from: account.status, to: "archivada", note: "Cuenta archivada", created_at: new Date().toISOString() });
-      var res = await SB.from("accounts").update({ status: "archivada", account_history: history }).eq("id", id).select().single();
+      history.push(stampHistoryEvent({ date: todayISO(), type: "status_change", from: account.status, to: "archivada", note: "Cuenta archivada", created_at: new Date().toISOString() }));
+      var res = await writeAccountHistory(id, history, { status: "archivada" });
       if (res.error) { window.alert("No se pudo archivar la cuenta: " + res.error.message); return; }
-      var updated = coerceAccount(res.data);
+      var updated = res.row ? coerceAccount(res.row) : Object.assign({}, account, { status: "archivada", account_history: history });
       state.accounts = state.accounts.map(function (a) { return a.id === id ? updated : a; });
       saveCache();
       closeAccountAdd();
@@ -2210,19 +2314,14 @@
     state.savingAccount = true; render();
     try {
       var history = Array.isArray(account.account_history) ? account.account_history.slice() : [];
-      history.push({ date: date, type: type, amount: Math.round(amount * 100) / 100, currency: "USD", note: note.trim(), created_at: new Date().toISOString() });
-      var result = await SB.from("accounts").update({ account_history: history }).eq("id", account.id).select().single();
+      history.push(stampHistoryEvent({ date: date, type: type, amount: Math.round(amount * 100) / 100, currency: "USD", note: note.trim(), created_at: new Date().toISOString() }));
+      var result = await writeAccountHistory(account.id, history, null);
       if (result.error) throw result.error;
-      var updated = coerceAccount(result.data);
+      var updated = result.row ? coerceAccount(result.row) : Object.assign({}, account, { account_history: history });
       state.accounts = state.accounts.map(function (item) { return item.id === updated.id ? updated : item; });
       saveCache();
     } catch (error) {
-      var message = String(error && error.message || "");
-      if (/account_history/i.test(message) && /column|schema cache|does not exist|could not find/i.test(message)) {
-        window.alert("La cuenta existe, pero falta aplicar la migración de Supabase para account_history. Ejecuta supabase/migrations/20261028070000_add_accounts_account_history.sql en el SQL Editor del proyecto y vuelve a intentarlo.");
-      } else {
-        window.alert("No se pudo guardar el movimiento. No se confirmó el cambio; inténtalo de nuevo.");
-      }
+      window.alert("No se pudo guardar el movimiento. No se confirmó el cambio; inténtalo de nuevo.");
     } finally {
       state.savingAccount = false; render();
     }
@@ -2234,7 +2333,12 @@
     var status = document.getElementById("accounts-schedule-status");
     var detail = document.getElementById("accounts-schedule-detail");
     var progress = document.getElementById("accounts-schedule-progress");
-    if (!clock || !status || !detail || !progress) return;
+    if (!clock || !status || !detail || !progress) {
+      // The Accounts view is no longer on screen: stop ticking instead of
+      // leaking a timer for the rest of the session.
+      stopAccountsScheduleClock();
+      return;
+    }
     try {
       var now = new Date();
       var parts = new Intl.DateTimeFormat("en-US", {
@@ -2257,6 +2361,12 @@
       clock.textContent = "Horario ET";
       status.textContent = "HORARIO PROGRAMADO";
       detail.textContent = "Lunes a viernes · 8:30–11:00 AM ET.";
+    }
+  }
+  function stopAccountsScheduleClock() {
+    if (window.__bitacoraAccountsScheduleTimer) {
+      window.clearInterval(window.__bitacoraAccountsScheduleTimer);
+      window.__bitacoraAccountsScheduleTimer = null;
     }
   }
   function accountsScheduleView() {
@@ -2340,7 +2450,8 @@
           h("div", { style: "display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;" },
             h("button", { style: "border:1px solid #E2DDD3;background:#fff;border-radius:7px;padding:6px 8px;font-size:11px;font-weight:600;cursor:pointer;", onClick: function () { recordAccountMovement(account, "cost"); } }, "+ Costo"),
             h("button", { style: "border:1px solid #E2DDD3;background:#fff;border-radius:7px;padding:6px 8px;font-size:11px;font-weight:600;cursor:pointer;", onClick: function () { recordAccountMovement(account, "payout"); } }, "+ Payout"),
-            h("button", { style: "border:1px solid #E2DDD3;background:#fff;border-radius:7px;padding:6px 8px;font-size:11px;font-weight:600;cursor:pointer;", onClick: function () { openAccountEdit(account); } }, "Editar estado"))),
+            h("button", { style: "border:1px solid #E2DDD3;background:#fff;border-radius:7px;padding:6px 8px;font-size:11px;font-weight:600;cursor:pointer;", onClick: function () { openAccountEdit(account); } }, "Editar estado"),
+            h("button", { style: "border:1px solid #E2DDD3;background:#fff;border-radius:7px;padding:6px 8px;font-size:11px;font-weight:600;cursor:pointer;", onClick: function () { setScopeAccount(account.id); setView("trades"); } }, "Ver operaciones"))),
         h("td", { style: "padding:13px 12px;white-space:nowrap;" }, h("span", { style: statusStyle(account.status) }, statusLabel(account.status))),
         h("td", { style: "padding:13px 12px;white-space:nowrap;font-size:12px;color:#807B72;" }, info.purchaseDate ? fmtDate(info.purchaseDate) : "sin dato"),
         h("td", { style: "padding:13px 12px;white-space:nowrap;font-size:12px;color:#807B72;" }, info.burnedDate ? fmtDate(info.burnedDate) : "—"),
@@ -3964,7 +4075,8 @@
     else if (event === "SIGNED_OUT") {
       // Wipe the cached financial snapshot + outbox so it can't be read on a
       // shared device after logout (security hardening F-05).
-      if (prevUser) { try { localStorage.removeItem("bitacora_cache_" + prevUser.id); localStorage.removeItem("bitacora_outbox_" + prevUser.id); } catch (e) { } }
+      if (prevUser) { try { localStorage.removeItem("bitacora_cache_" + prevUser.id); localStorage.removeItem("bitacora_outbox_" + prevUser.id); localStorage.removeItem("bitacora_acct_history_" + prevUser.id); } catch (e) { } }
+      state.historyNoticeShown = false;
       state.trades = []; state.journal = []; state.accounts = []; state.settings = defaultSettings(); state.view = "dashboard"; state.selectedId = null; state.fAccount = "all"; state.scopeAccount = "all"; state.fTag = "all"; state.fResult = "all"; state.fSymbol = "all"; state.fSetup = "all"; state.fDateFrom = ""; state.fDateTo = ""; state.fRating = "all"; state.fPnlMin = ""; state.fPnlMax = ""; state.fSearch = ""; state.sortKey = "date"; state.sortDir = "desc"; state.selectedIds = []; state.quickNote = ""; state.jSearch = ""; state.jMood = "all"; state.pending = 0;
       try { localStorage.removeItem("bitacora_scope_account"); window.__bitacoraScopeAccount = "all"; } catch (e) { }
       state.mfaGate = false; state.mfaChecked = false; state.mfaFactors = []; state.mfaFactorsLoaded = false; render();

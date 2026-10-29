@@ -97,7 +97,12 @@
     var blank=document.createElement("option");blank.value="";blank.textContent="Sin asignar";select.appendChild(blank);
     var existingTags=tags.value.split(",").map(function(v){return v.trim();}).filter(Boolean);
     list.forEach(function(s){var o=document.createElement("option");o.value="strategy:"+s.name+"|version:"+s.version;o.textContent=s.name+" · "+s.version;if(existingTags.indexOf(o.value)>=0)o.selected=true;select.appendChild(o);});
-    wrap.appendChild(label);wrap.appendChild(select);tags.parentElement.insertAdjacentElement("beforebegin",wrap);
+    wrap.appendChild(label);wrap.appendChild(select);// Insert above the tags field but never outside #modal-root: if the input sits
+    // directly in the root, "beforebegin" on its parent would drop the picker into the
+    // page, so the dedupe guard above would never see it and the modal observer would
+    // re-insert a new picker on every mutation (an endless DOM-growth loop).
+    var anchor=tags.parentElement&&tags.parentElement!==root?tags.parentElement:tags;
+    anchor.insertAdjacentElement("beforebegin",wrap);
   }
   function bindStrategyTradeSave(){
     var root=document.getElementById("modal-root");if(!root||root.__slTradeBound)return;root.__slTradeBound=true;

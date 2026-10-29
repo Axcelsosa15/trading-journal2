@@ -8,8 +8,15 @@ updates:
     open-pull-requests-limit: 5
 
   # Keep GitHub Actions (CI, CodeQL, ZAP) pinned and patched.
+  # Major bumps are ignored on purpose: an automated actions/checkout v4 -> v7
+  # bump left every workflow in startup_failure twice (it was reverted once in
+  # #69 and reintroduced right after), so CI silently stopped running for
+  # months. Majors are reviewed by hand against a real green run instead.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
