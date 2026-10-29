@@ -28,7 +28,10 @@ check("Account save validates non-negative target and drawdown", /optionalNonNeg
 check("Account save catches unexpected async failures", /No se pudo guardar la cuenta por un error de conexión o del servidor/.test(app));
 check("Account archive catches unexpected async failures", /No se pudo archivar la cuenta por un error de conexión o del servidor/.test(app));
 const archiveFn = app.match(/async function deleteAccount\(\)([\s\S]*?)function openAccountAdd\(/);
-check("Archiving updates status/history rather than deleting the account", !!archiveFn && /update\(\{ status: "archivada", account_history: history \}\)/.test(archiveFn[1]) && !/\.delete\(\)/.test(archiveFn[1]));
+// The status+history write goes through writeAccountHistory, which tolerates an
+// accounts table that has no account_history column yet. What matters here is
+// unchanged: archiving sets the status and appends history, and never deletes.
+check("Archiving updates status/history rather than deleting the account", !!archiveFn && /writeAccountHistory\(id, history, \{ status: "archivada" \}\)/.test(archiveFn[1]) && !/\.delete\(\)/.test(archiveFn[1]));
 check("Archived account cannot be archived again", /account\.status === "archivada"/.test(app) && /editing && d\.status !== "archivada"/.test(app));
 
 if (!process.exitCode) console.log("ACCOUNT LIFECYCLE SMOKE OK");
